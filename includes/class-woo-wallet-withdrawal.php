@@ -89,6 +89,16 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
+		 * Notes table name.
+		 *
+		 * @return string
+		 */
+		private static function notes_table() {
+			global $wpdb;
+			return $wpdb->base_prefix . 'woo_wallet_withdrawal_notes';
+		}
+
+		/**
 		 * Class constructor.
 		 */
 		public function __construct() {
@@ -106,9 +116,28 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 
 			if ( is_admin() ) {
 				add_action( 'admin_menu', array( $this, 'admin_menu' ), 70 );
+				add_action( 'admin_enqueue_scripts', array( $this, 'admin_enqueue_scripts' ) );
 				add_action( 'admin_post_woo_wallet_withdrawal_process', array( $this, 'handle_admin_process_request' ) );
+				add_action( 'admin_post_woo_wallet_withdrawal_create', array( $this, 'handle_admin_create_request' ) );
+				add_action( 'admin_post_woo_wallet_withdrawal_add_note', array( $this, 'handle_admin_add_note' ) );
 				add_action( 'admin_notices', array( $this, 'admin_notices' ) );
 			}
+		}
+
+		/**
+		 * Enqueue WooCommerce's enhanced-select (select2) assets on the
+		 * Withdrawals screens, for the "search for a customer" field on the
+		 * manual-create form. Reuses the same `wc-customer-search` widget /
+		 * `woocommerce_json_search_customers` AJAX action WooCommerce's own
+		 * order-edit screen uses, rather than shipping a second implementation.
+		 */
+		public function admin_enqueue_scripts() {
+			$screen = get_current_screen();
+			if ( ! $screen || woo_wallet_get_screen_id( 'woo-wallet-withdrawals' ) !== $screen->id ) {
+				return;
+			}
+			wp_enqueue_style( 'woocommerce_admin_styles' );
+			wp_enqueue_script( 'wc-enhanced-select' );
 		}
 
 		/**
@@ -422,6 +451,37 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
+			$result = self::reserve_and_insert( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $iban, $user_id, 'pending', '' );
+			if ( ! $result['is_valid'] ) {
+				return $result;
+			}
+
+			do_action( 'woo_wallet_withdrawal_requested', $result['id'], $user_id, $amount + $result['charge'] );
+
+			return array(
+				'is_valid' => true,
+				'message'  => __( 'Your withdrawal request has been submitted and is awaiting approval.', 'woo-wallet' ),
+			);
+		}
+
+		/**
+		 * Compute the configured charge, reserve the funds (debit the wallet),
+		 * and insert the withdrawal request row. Shared by the customer
+		 * self-service form and the admin manual-create form — the only two
+		 * places money actually moves for a withdrawal request.
+		 *
+		 * @param int    $user_id          Customer whose wallet is charged.
+		 * @param float  $amount           Requested payout amount (gross).
+		 * @param string $bank_name        Bank name.
+		 * @param string $beneficiary_name Beneficiary name.
+		 * @param string $account_number   Bank account number.
+		 * @param string $iban             Optional IBAN.
+		 * @param int    $created_by       User id who created the request (customer themself, or the staff member logging it).
+		 * @param string $status           Initial status: 'pending' or 'paid'.
+		 * @param string $reference_no     Optional bank transfer reference number.
+		 * @return array {is_valid, message, id, charge}
+		 */
+		private static function reserve_and_insert( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $iban, $created_by, $status = 'pending', $reference_no = '' ) {
 			$charge_type   = woo_wallet()->settings_api->get_option( 'withdrawal_charge_type', '_wallet_settings_withdrawal', 'fixed' );
 			$charge_amount = (float) woo_wallet()->settings_api->get_option( 'withdrawal_charge_amount', '_wallet_settings_withdrawal', 0 );
 			$charge        = 'percent' === $charge_type ? ( $amount * $charge_amount ) / 100 : $charge_amount;
@@ -432,7 +492,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			if ( $current_balance <= 0 || $debit_amount > $current_balance ) {
 				return array(
 					'is_valid' => false,
-					'message'  => __( 'Entered amount is greater than your current wallet balance.', 'woo-wallet' ),
+					'message'  => __( 'Entered amount is greater than the customer&#8217;s current wallet balance.', 'woo-wallet' ),
 				);
 			}
 
@@ -444,30 +504,34 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			if ( ! $transaction_id ) {
 				return array(
 					'is_valid' => false,
-					'message'  => __( 'Entered amount is greater than your current wallet balance.', 'woo-wallet' ),
+					'message'  => __( 'Entered amount is greater than the customer&#8217;s current wallet balance.', 'woo-wallet' ),
 				);
 			}
 
-			$withdrawal_id = self::insert_request(
-				array(
-					'user_id'          => $user_id,
-					'transaction_id'   => $transaction_id,
-					'amount'           => $amount,
-					'charge'           => $charge,
-					'currency'         => woo_wallet()->wallet->resolve_active_currency(),
-					'bank_name'        => $bank_name,
-					'beneficiary_name' => $beneficiary_name,
-					'account_number'   => $account_number,
-					'iban'             => $iban,
-					'status'           => 'pending',
-				)
+			$row_args = array(
+				'user_id'          => $user_id,
+				'created_by'       => $created_by,
+				'transaction_id'   => $transaction_id,
+				'amount'           => $amount,
+				'charge'           => $charge,
+				'currency'         => woo_wallet()->wallet->resolve_active_currency(),
+				'bank_name'        => $bank_name,
+				'beneficiary_name' => $beneficiary_name,
+				'account_number'   => $account_number,
+				'iban'             => $iban,
+				'reference_no'     => $reference_no,
+				'status'           => $status,
 			);
-
-			do_action( 'woo_wallet_withdrawal_requested', $withdrawal_id, $user_id, $debit_amount );
+			if ( 'paid' === $status ) {
+				$row_args['processed_by'] = $created_by;
+			}
+			$withdrawal_id = self::insert_request( $row_args );
 
 			return array(
 				'is_valid' => true,
-				'message'  => __( 'Your withdrawal request has been submitted and is awaiting approval.', 'woo-wallet' ),
+				'message'  => '',
+				'id'       => $withdrawal_id,
+				'charge'   => $charge,
 			);
 		}
 
@@ -479,23 +543,29 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 */
 		public static function insert_request( array $data ) {
 			global $wpdb;
-			$wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-				self::table(),
-				array(
-					'user_id'          => (int) $data['user_id'],
-					'transaction_id'   => (int) $data['transaction_id'],
-					'amount'           => (float) $data['amount'],
-					'charge'           => (float) $data['charge'],
-					'currency'         => (string) $data['currency'],
-					'bank_name'        => (string) $data['bank_name'],
-					'beneficiary_name' => (string) $data['beneficiary_name'],
-					'account_number'   => (string) $data['account_number'],
-					'iban'             => (string) $data['iban'],
-					'status'           => (string) $data['status'],
-					'date_created'     => current_time( 'mysql' ),
-				),
-				array( '%d', '%d', '%f', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+			$row = array(
+				'user_id'          => (int) $data['user_id'],
+				'transaction_id'   => (int) $data['transaction_id'],
+				'amount'           => (float) $data['amount'],
+				'charge'           => (float) $data['charge'],
+				'currency'         => (string) $data['currency'],
+				'bank_name'        => (string) $data['bank_name'],
+				'beneficiary_name' => (string) $data['beneficiary_name'],
+				'account_number'   => (string) $data['account_number'],
+				'iban'             => (string) $data['iban'],
+				'reference_no'     => isset( $data['reference_no'] ) ? (string) $data['reference_no'] : '',
+				'receipt_id'       => isset( $data['receipt_id'] ) ? (int) $data['receipt_id'] : 0,
+				'status'           => (string) $data['status'],
+				'created_by'       => isset( $data['created_by'] ) ? (int) $data['created_by'] : 0,
+				'processed_by'     => isset( $data['processed_by'] ) ? (int) $data['processed_by'] : 0,
+				'date_created'     => current_time( 'mysql' ),
 			);
+			$formats = array( '%d', '%d', '%f', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d', '%d', '%s' );
+			if ( 'paid' === $row['status'] ) {
+				$row['date_updated'] = current_time( 'mysql' );
+				$formats[]           = '%s';
+			}
+			$wpdb->insert( self::table(), $row, $formats ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 			return (int) $wpdb->insert_id;
 		}
 
@@ -571,6 +641,100 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
+		 * Add a note to a withdrawal request.
+		 *
+		 * @param int    $withdrawal_id Request id.
+		 * @param string $note          Note text.
+		 * @param string $visibility    'public' (shown to the customer) or 'private' (staff only).
+		 * @param int    $created_by    Author user id (0 for a system-generated note).
+		 * @return int Insert id, or 0 if the note text is empty.
+		 */
+		public static function add_note( $withdrawal_id, $note, $visibility = 'private', $created_by = 0 ) {
+			$note = trim( (string) $note );
+			if ( '' === $note ) {
+				return 0;
+			}
+			global $wpdb;
+			$wpdb->insert( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+				self::notes_table(),
+				array(
+					'withdrawal_id' => absint( $withdrawal_id ),
+					'note'          => $note,
+					'visibility'    => 'public' === $visibility ? 'public' : 'private',
+					'created_by'    => (int) $created_by,
+					'date_created'  => current_time( 'mysql' ),
+				),
+				array( '%d', '%s', '%s', '%d', '%s' )
+			);
+			return (int) $wpdb->insert_id;
+		}
+
+		/**
+		 * Fetch notes for a withdrawal request, newest first.
+		 *
+		 * @param int    $withdrawal_id Request id.
+		 * @param string $visibility    Optional filter: 'public' or 'private'. Omit for all notes.
+		 * @return array
+		 */
+		public static function get_notes( $withdrawal_id, $visibility = '' ) {
+			global $wpdb;
+			$sql    = 'SELECT * FROM ' . self::notes_table() . ' WHERE withdrawal_id = %d';
+			$params = array( absint( $withdrawal_id ) );
+			if ( in_array( $visibility, array( 'public', 'private' ), true ) ) {
+				$sql     .= ' AND visibility = %s';
+				$params[] = $visibility;
+			}
+			$sql .= ' ORDER BY id DESC';
+			return (array) $wpdb->get_results( $wpdb->prepare( $sql, $params ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+		}
+
+		/**
+		 * Handle an uploaded receipt file (PDF/PNG/JPG) as a Media Library
+		 * attachment, restricted to those three types regardless of the
+		 * site's normal upload_mimes allowlist.
+		 *
+		 * @param string $file_field `$_FILES` key.
+		 * @return array {id:int, error:string} id is 0 when no file was submitted or empty on error (error explains why).
+		 */
+		private static function maybe_handle_receipt_upload( $file_field ) {
+			if ( empty( $_FILES[ $file_field ] ) || empty( $_FILES[ $file_field ]['name'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+				return array(
+					'id'    => 0,
+					'error' => '',
+				);
+			}
+
+			$allowed = array(
+				'pdf'  => 'application/pdf',
+				'png'  => 'image/png',
+				'jpg'  => 'image/jpeg',
+				'jpeg' => 'image/jpeg',
+			);
+
+			require_once ABSPATH . 'wp-admin/includes/image.php';
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+			require_once ABSPATH . 'wp-admin/includes/media.php';
+
+			$restrict_mimes = function ( $mimes ) use ( $allowed ) {
+				return $allowed;
+			};
+			add_filter( 'upload_mimes', $restrict_mimes );
+			$attachment_id = media_handle_upload( $file_field, 0, array(), array( 'test_form' => false ) );
+			remove_filter( 'upload_mimes', $restrict_mimes );
+
+			if ( is_wp_error( $attachment_id ) ) {
+				return array(
+					'id'    => 0,
+					'error' => $attachment_id->get_error_message(),
+				);
+			}
+			return array(
+				'id'    => (int) $attachment_id,
+				'error' => '',
+			);
+		}
+
+		/**
 		 * Add the "Withdrawals" submenu under the Axfit Wallet admin menu.
 		 */
 		public function admin_menu() {
@@ -578,28 +742,50 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Render the admin Withdrawals review screen.
+		 * Route the Withdrawals screen: the list (default), the manual-create
+		 * form (`&action=new`), or a single request's detail view (`&action=view&id=`).
 		 */
 		public function render_admin_page() {
 			if ( ! current_user_can( get_wallet_user_capability() ) ) {
 				wp_die( esc_html__( 'You do not have permission to access this page.', 'woo-wallet' ) );
 			}
+			$action = isset( $_GET['action'] ) ? sanitize_key( wp_unslash( $_GET['action'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			if ( 'new' === $action ) {
+				$this->render_admin_create_form();
+			} elseif ( 'view' === $action && ! empty( $_GET['id'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				$this->render_admin_detail( absint( $_GET['id'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			} else {
+				$this->render_admin_list();
+			}
+		}
+
+		/**
+		 * The Withdrawals list screen.
+		 */
+		private function render_admin_list() {
 			if ( ! class_exists( 'Woo_Wallet_Withdrawal_Report' ) ) {
 				include_once WOO_WALLET_ABSPATH . 'includes/admin/class-woo-wallet-withdrawal-report.php';
 			}
 			$table = new Woo_Wallet_Withdrawal_Report();
 			$table->prepare_items();
+			$new_url = add_query_arg(
+				array(
+					'page'   => 'woo-wallet-withdrawals',
+					'action' => 'new',
+				),
+				admin_url( 'admin.php' )
+			);
 			?>
 			<div class="wrap">
-				<h1><?php esc_html_e( 'Wallet Withdrawals', 'woo-wallet' ); ?></h1>
+				<h1 class="wp-heading-inline"><?php esc_html_e( 'Wallet Withdrawals', 'woo-wallet' ); ?></h1>
+				<a href="<?php echo esc_url( $new_url ); ?>" class="page-title-action"><?php esc_html_e( 'Create Withdrawal', 'woo-wallet' ); ?></a>
+				<hr class="wp-header-end" />
 				<?php
 				/**
-				 * Deliberately not wrapped in a `<form>` — unlike the read-only
-				 * Referral Report table, every pending row here renders its own
-				 * `<form method="post">` (Mark paid / Reject) inside a cell, and
-				 * forms cannot nest. Pagination links are plain GET anchors and
-				 * the status filter carries its own `<form>` in extra_tablenav(),
-				 * so nothing here needs an enclosing form.
+				 * Not wrapped in a `<form>` — the status filter in
+				 * extra_tablenav() carries its own `<form>`, and row actions
+				 * are now plain links (the detail screen owns every POST
+				 * form), so nothing here needs an enclosing form.
 				 */
 				$table->display();
 				?>
@@ -608,7 +794,385 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Handle the admin "mark paid" / "reject" action from the Withdrawals screen.
+		 * The manual "log a withdrawal for a customer" form — for a customer
+		 * who phones/messages in rather than using the self-service tab.
+		 */
+		private function render_admin_create_form() {
+			$list_url = admin_url( 'admin.php?page=woo-wallet-withdrawals' );
+			?>
+			<div class="wrap">
+				<h1><?php esc_html_e( 'Create Withdrawal', 'woo-wallet' ); ?></h1>
+				<p><?php esc_html_e( 'Log a withdrawal you are handling directly — e.g. a customer who called in. The amount is reserved from their wallet exactly as a self-service request would be, and this record is attributed to your account.', 'woo-wallet' ); ?></p>
+				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" enctype="multipart/form-data" style="max-width:640px;">
+					<input type="hidden" name="action" value="woo_wallet_withdrawal_create" />
+					<?php wp_nonce_field( 'woo_wallet_withdrawal_create' ); ?>
+					<table class="form-table">
+						<tr>
+							<th><label for="ww-customer"><?php esc_html_e( 'Customer', 'woo-wallet' ); ?></label></th>
+							<td>
+								<select id="ww-customer" name="user_id" class="wc-customer-search" style="width:100%;" data-placeholder="<?php esc_attr_e( 'Search by name or email&hellip;', 'woo-wallet' ); ?>" data-allow_clear="true" required></select>
+							</td>
+						</tr>
+						<tr>
+							<th><label for="ww-amount"><?php esc_html_e( 'Amount', 'woo-wallet' ); ?></label></th>
+							<td><input type="number" step="0.01" min="0.01" id="ww-amount" name="amount" required /></td>
+						</tr>
+						<tr>
+							<th><label for="ww-bank"><?php esc_html_e( 'Bank', 'woo-wallet' ); ?></label></th>
+							<td><input type="text" id="ww-bank" name="bank_name" class="regular-text" required /></td>
+						</tr>
+						<tr>
+							<th><label for="ww-beneficiary"><?php esc_html_e( 'Beneficiary Name', 'woo-wallet' ); ?></label></th>
+							<td><input type="text" id="ww-beneficiary" name="beneficiary_name" class="regular-text" required /></td>
+						</tr>
+						<tr>
+							<th><label for="ww-account"><?php esc_html_e( 'Account Number', 'woo-wallet' ); ?></label></th>
+							<td><input type="text" id="ww-account" name="account_number" class="regular-text" required /></td>
+						</tr>
+						<tr>
+							<th><label for="ww-iban"><?php esc_html_e( 'IBAN (optional)', 'woo-wallet' ); ?></label></th>
+							<td><input type="text" id="ww-iban" name="iban" class="regular-text" /></td>
+						</tr>
+						<tr>
+							<th><label for="ww-reference"><?php esc_html_e( 'Reference No. (optional)', 'woo-wallet' ); ?></label></th>
+							<td><input type="text" id="ww-reference" name="reference_no" class="regular-text" /></td>
+						</tr>
+						<tr>
+							<th><label for="ww-receipt"><?php esc_html_e( 'Receipt (optional)', 'woo-wallet' ); ?></label></th>
+							<td>
+								<input type="file" id="ww-receipt" name="receipt" accept=".pdf,.png,.jpg,.jpeg" />
+								<p class="description"><?php esc_html_e( 'PDF, PNG or JPG.', 'woo-wallet' ); ?></p>
+							</td>
+						</tr>
+						<tr>
+							<th><label for="ww-status"><?php esc_html_e( 'Status', 'woo-wallet' ); ?></label></th>
+							<td>
+								<select id="ww-status" name="status">
+									<option value="pending"><?php esc_html_e( 'Pending — I still need to send the transfer', 'woo-wallet' ); ?></option>
+									<option value="paid"><?php esc_html_e( 'Already paid — I already sent the transfer', 'woo-wallet' ); ?></option>
+								</select>
+							</td>
+						</tr>
+						<tr>
+							<th><label for="ww-note"><?php esc_html_e( 'Note (optional)', 'woo-wallet' ); ?></label></th>
+							<td>
+								<textarea id="ww-note" name="note" class="large-text" rows="3"></textarea>
+								<p>
+									<label><input type="radio" name="note_visibility" value="private" checked /> <?php esc_html_e( 'Private (staff only)', 'woo-wallet' ); ?></label>
+									&nbsp;&nbsp;
+									<label><input type="radio" name="note_visibility" value="public" /> <?php esc_html_e( 'Public (visible to the customer)', 'woo-wallet' ); ?></label>
+								</p>
+							</td>
+						</tr>
+					</table>
+					<?php submit_button( __( 'Create Withdrawal', 'woo-wallet' ) ); ?>
+					<a href="<?php echo esc_url( $list_url ); ?>" class="button"><?php esc_html_e( 'Cancel', 'woo-wallet' ); ?></a>
+				</form>
+			</div>
+			<?php
+		}
+
+		/**
+		 * Single withdrawal request detail: full field dump, notes thread, and
+		 * (while pending) the mark-paid/reject form.
+		 *
+		 * @param int $id Request id.
+		 */
+		private function render_admin_detail( $id ) {
+			$request = self::get_request( $id );
+			if ( ! $request ) {
+				echo '<div class="wrap"><h1>' . esc_html__( 'Withdrawal not found', 'woo-wallet' ) . '</h1></div>';
+				return;
+			}
+			$customer     = get_userdata( $request->user_id );
+			$created_by   = (int) $request->created_by;
+			$processed_by = (int) $request->processed_by;
+			$notes        = self::get_notes( $request->id );
+			$post_url     = admin_url( 'admin-post.php' );
+			?>
+			<div class="wrap">
+				<h1><?php echo esc_html( sprintf( /* translators: %d: withdrawal request id */ __( 'Withdrawal #%d', 'woo-wallet' ), $request->id ) ); ?></h1>
+
+				<table class="form-table">
+					<tr>
+						<th><?php esc_html_e( 'Customer', 'woo-wallet' ); ?></th>
+						<td><?php echo $customer ? esc_html( $customer->display_name . ' <' . $customer->user_email . '>' ) : esc_html( '#' . $request->user_id ); ?></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Amount', 'woo-wallet' ); ?></th>
+						<td>
+							<?php echo wp_kses_post( wc_price( (float) $request->amount, array( 'currency' => $request->currency ? $request->currency : get_option( 'woocommerce_currency' ) ) ) ); ?>
+							<?php if ( (float) $request->charge > 0 ) : ?>
+								<?php
+								printf(
+									/* translators: %s: charge amount */
+									esc_html__( '(+ %s charge, reserved from wallet)', 'woo-wallet' ),
+									wp_kses_post( wc_price( (float) $request->charge, array( 'currency' => $request->currency ? $request->currency : get_option( 'woocommerce_currency' ) ) ) )
+								);
+								?>
+							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Bank details', 'woo-wallet' ); ?></th>
+						<td>
+							<?php echo esc_html( $request->bank_name ); ?><br />
+							<?php echo esc_html( $request->beneficiary_name ); ?><br />
+							<?php echo esc_html( $request->account_number ); ?>
+							<?php if ( ! empty( $request->iban ) ) : ?>
+								<br />IBAN: <?php echo esc_html( $request->iban ); ?>
+							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Reference No.', 'woo-wallet' ); ?></th>
+						<td><?php echo $request->reference_no ? esc_html( $request->reference_no ) : '&ndash;'; ?></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Receipt', 'woo-wallet' ); ?></th>
+						<td>
+							<?php if ( $request->receipt_id && wp_get_attachment_url( $request->receipt_id ) ) : ?>
+								<a href="<?php echo esc_url( wp_get_attachment_url( $request->receipt_id ) ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'View receipt', 'woo-wallet' ); ?></a>
+							<?php else : ?>
+								&ndash;
+							<?php endif; ?>
+						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Status', 'woo-wallet' ); ?></th>
+						<td><span class="woo-wallet-withdrawal-status woo-wallet-withdrawal-status--<?php echo esc_attr( $request->status ); ?>"><?php echo esc_html( ucfirst( $request->status ) ); ?></span></td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Requested by', 'woo-wallet' ); ?></th>
+						<td>
+							<?php if ( $created_by && $created_by === (int) $request->user_id ) : ?>
+								<?php esc_html_e( 'The customer (self-service request)', 'woo-wallet' ); ?>
+							<?php elseif ( $created_by ) : ?>
+								<?php $staff = get_userdata( $created_by ); ?>
+								<?php
+								printf(
+									/* translators: %s: staff member name */
+									esc_html__( 'Logged manually by staff: %s', 'woo-wallet' ),
+									esc_html( $staff ? $staff->display_name : '#' . $created_by )
+								);
+								?>
+							<?php else : ?>
+								&ndash;
+							<?php endif; ?>
+						</td>
+					</tr>
+					<?php if ( $processed_by ) : ?>
+					<tr>
+						<th><?php esc_html_e( 'Processed by', 'woo-wallet' ); ?></th>
+						<td>
+							<?php $staff = get_userdata( $processed_by ); ?>
+							<?php echo esc_html( $staff ? $staff->display_name : '#' . $processed_by ); ?>
+						</td>
+					</tr>
+					<?php endif; ?>
+					<tr>
+						<th><?php esc_html_e( 'Requested on', 'woo-wallet' ); ?></th>
+						<td><?php echo esc_html( wc_string_to_datetime( $request->date_created )->date_i18n( wc_date_format() . ' ' . wc_time_format() ) ); ?></td>
+					</tr>
+				</table>
+
+				<?php if ( 'pending' === $request->status ) : ?>
+					<h2><?php esc_html_e( 'Process this request', 'woo-wallet' ); ?></h2>
+					<form method="post" action="<?php echo esc_url( $post_url ); ?>" enctype="multipart/form-data">
+						<input type="hidden" name="action" value="woo_wallet_withdrawal_process" />
+						<input type="hidden" name="withdrawal_id" value="<?php echo esc_attr( $request->id ); ?>" />
+						<?php wp_nonce_field( 'woo_wallet_withdrawal_process' ); ?>
+						<table class="form-table">
+							<tr>
+								<th><label for="ww-proc-reference"><?php esc_html_e( 'Reference No.', 'woo-wallet' ); ?></label></th>
+								<td><input type="text" id="ww-proc-reference" name="reference_no" class="regular-text" value="<?php echo esc_attr( $request->reference_no ); ?>" /></td>
+							</tr>
+							<tr>
+								<th><label for="ww-proc-receipt"><?php esc_html_e( 'Receipt', 'woo-wallet' ); ?></label></th>
+								<td>
+									<input type="file" id="ww-proc-receipt" name="receipt" accept=".pdf,.png,.jpg,.jpeg" />
+									<p class="description"><?php esc_html_e( 'PDF, PNG or JPG.', 'woo-wallet' ); ?></p>
+								</td>
+							</tr>
+							<tr>
+								<th><label for="ww-proc-note"><?php esc_html_e( 'Note', 'woo-wallet' ); ?></label></th>
+								<td>
+									<textarea id="ww-proc-note" name="note" class="large-text" rows="3"></textarea>
+									<p>
+										<label><input type="radio" name="note_visibility" value="private" checked /> <?php esc_html_e( 'Private (staff only)', 'woo-wallet' ); ?></label>
+										&nbsp;&nbsp;
+										<label><input type="radio" name="note_visibility" value="public" /> <?php esc_html_e( 'Public (visible to the customer)', 'woo-wallet' ); ?></label>
+									</p>
+								</td>
+							</tr>
+						</table>
+						<button type="submit" name="ww_action" value="paid" class="button button-primary" onclick="return confirm('<?php echo esc_js( __( 'Mark this withdrawal as paid? Make sure you have already sent the bank transfer.', 'woo-wallet' ) ); ?>');"><?php esc_html_e( 'Mark paid', 'woo-wallet' ); ?></button>
+						<button type="submit" name="ww_action" value="reject" class="button" onclick="return confirm('<?php echo esc_js( __( 'Reject this request? The reserved amount will be returned to the customer wallet.', 'woo-wallet' ) ); ?>');"><?php esc_html_e( 'Reject', 'woo-wallet' ); ?></button>
+					</form>
+				<?php endif; ?>
+
+				<h2><?php esc_html_e( 'Notes', 'woo-wallet' ); ?></h2>
+				<form method="post" action="<?php echo esc_url( $post_url ); ?>" style="margin-bottom:16px;">
+					<input type="hidden" name="action" value="woo_wallet_withdrawal_add_note" />
+					<input type="hidden" name="withdrawal_id" value="<?php echo esc_attr( $request->id ); ?>" />
+					<?php wp_nonce_field( 'woo_wallet_withdrawal_add_note' ); ?>
+					<textarea name="note" class="large-text" rows="2" placeholder="<?php esc_attr_e( 'Add a note&hellip;', 'woo-wallet' ); ?>" required></textarea>
+					<p>
+						<label><input type="radio" name="note_visibility" value="private" checked /> <?php esc_html_e( 'Private (staff only)', 'woo-wallet' ); ?></label>
+						&nbsp;&nbsp;
+						<label><input type="radio" name="note_visibility" value="public" /> <?php esc_html_e( 'Public (visible to the customer)', 'woo-wallet' ); ?></label>
+						<?php submit_button( __( 'Add note', 'woo-wallet' ), 'secondary', 'submit', false ); ?>
+					</p>
+				</form>
+
+				<?php if ( $notes ) : ?>
+					<table class="widefat striped" style="max-width:800px;">
+						<thead>
+							<tr>
+								<th><?php esc_html_e( 'Note', 'woo-wallet' ); ?></th>
+								<th><?php esc_html_e( 'Visibility', 'woo-wallet' ); ?></th>
+								<th><?php esc_html_e( 'By', 'woo-wallet' ); ?></th>
+								<th><?php esc_html_e( 'Date', 'woo-wallet' ); ?></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $notes as $note_row ) : ?>
+								<?php $author = $note_row->created_by ? get_userdata( $note_row->created_by ) : null; ?>
+								<tr>
+									<td><?php echo esc_html( $note_row->note ); ?></td>
+									<td><?php echo 'public' === $note_row->visibility ? esc_html__( 'Public', 'woo-wallet' ) : esc_html__( 'Private', 'woo-wallet' ); ?></td>
+									<td><?php echo esc_html( $author ? $author->display_name : __( 'System', 'woo-wallet' ) ); ?></td>
+									<td><?php echo esc_html( wc_string_to_datetime( $note_row->date_created )->date_i18n( wc_date_format() . ' ' . wc_time_format() ) ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				<?php else : ?>
+					<p><?php esc_html_e( 'No notes yet.', 'woo-wallet' ); ?></p>
+				<?php endif; ?>
+			</div>
+			<?php
+		}
+
+		/**
+		 * Handle the manual "Create Withdrawal" form.
+		 */
+		public function handle_admin_create_request() {
+			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+				wp_die( esc_html__( 'You do not have permission to do this.', 'woo-wallet' ) );
+			}
+			check_admin_referer( 'woo_wallet_withdrawal_create' );
+
+			$admin_id = get_current_user_id();
+			$notice   = array();
+
+			$target_user_id = isset( $_POST['user_id'] ) ? absint( $_POST['user_id'] ) : 0;
+			$customer        = $target_user_id ? get_userdata( $target_user_id ) : false;
+			$amount          = isset( $_POST['amount'] ) ? (float) sanitize_text_field( wp_unslash( $_POST['amount'] ) ) : 0;
+			$bank_name       = isset( $_POST['bank_name'] ) ? sanitize_text_field( wp_unslash( $_POST['bank_name'] ) ) : '';
+			$beneficiary     = isset( $_POST['beneficiary_name'] ) ? sanitize_text_field( wp_unslash( $_POST['beneficiary_name'] ) ) : '';
+			$account_number  = isset( $_POST['account_number'] ) ? preg_replace( '/\s+/', '', sanitize_text_field( wp_unslash( $_POST['account_number'] ) ) ) : '';
+			$iban            = isset( $_POST['iban'] ) ? strtoupper( preg_replace( '/\s+/', '', sanitize_text_field( wp_unslash( $_POST['iban'] ) ) ) ) : '';
+			$reference_no    = isset( $_POST['reference_no'] ) ? sanitize_text_field( wp_unslash( $_POST['reference_no'] ) ) : '';
+			$status          = isset( $_POST['status'] ) && 'paid' === $_POST['status'] ? 'paid' : 'pending';
+			$note            = isset( $_POST['note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['note'] ) ) : '';
+			$note_visibility = isset( $_POST['note_visibility'] ) && 'public' === $_POST['note_visibility'] ? 'public' : 'private';
+
+			if ( ! $customer ) {
+				$notice = array(
+					'type'    => 'error',
+					'message' => __( 'Please select a customer.', 'woo-wallet' ),
+				);
+			} elseif ( $amount <= 0 ) {
+				$notice = array(
+					'type'    => 'error',
+					'message' => __( 'Amount must be greater than zero.', 'woo-wallet' ),
+				);
+			} elseif ( '' === $bank_name || '' === $beneficiary || '' === $account_number ) {
+				$notice = array(
+					'type'    => 'error',
+					'message' => __( 'Bank, beneficiary name and account number are required.', 'woo-wallet' ),
+				);
+			} else {
+				$result = self::reserve_and_insert( $target_user_id, $amount, $bank_name, $beneficiary, $account_number, $iban, $admin_id, $status, $reference_no );
+				if ( ! $result['is_valid'] ) {
+					$notice = array(
+						'type'    => 'error',
+						'message' => $result['message'],
+					);
+				} else {
+					$receipt = self::maybe_handle_receipt_upload( 'receipt' );
+					if ( $receipt['id'] ) {
+						global $wpdb;
+						$wpdb->update( self::table(), array( 'receipt_id' => $receipt['id'] ), array( 'id' => $result['id'] ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+					}
+					if ( $note ) {
+						self::add_note( $result['id'], $note, $note_visibility, $admin_id );
+					}
+					do_action( 'woo_wallet_withdrawal_requested', $result['id'], $target_user_id, $amount + $result['charge'] );
+					if ( 'paid' === $status ) {
+						do_action( 'woo_wallet_withdrawal_paid', $result['id'], $target_user_id );
+					}
+					set_transient(
+						'woo_wallet_withdrawal_admin_notice_' . $admin_id,
+						array(
+							'type'    => 'success',
+							/* translators: %d: withdrawal request id */
+							'message' => sprintf( __( 'Withdrawal #%d created.', 'woo-wallet' ), $result['id'] ),
+						),
+						MINUTE_IN_SECONDS
+					);
+					wp_safe_redirect(
+						add_query_arg(
+							array(
+								'page'   => 'woo-wallet-withdrawals',
+								'action' => 'view',
+								'id'     => $result['id'],
+							),
+							admin_url( 'admin.php' )
+						)
+					);
+					exit();
+				}
+			}
+
+			set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
+			wp_safe_redirect( admin_url( 'admin.php?page=woo-wallet-withdrawals&action=new' ) );
+			exit();
+		}
+
+		/**
+		 * Handle a standalone note added from the detail screen.
+		 */
+		public function handle_admin_add_note() {
+			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+				wp_die( esc_html__( 'You do not have permission to do this.', 'woo-wallet' ) );
+			}
+			check_admin_referer( 'woo_wallet_withdrawal_add_note' );
+
+			$id         = isset( $_POST['withdrawal_id'] ) ? absint( $_POST['withdrawal_id'] ) : 0;
+			$note       = isset( $_POST['note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['note'] ) ) : '';
+			$visibility = isset( $_POST['note_visibility'] ) && 'public' === $_POST['note_visibility'] ? 'public' : 'private';
+
+			if ( $id && $note ) {
+				self::add_note( $id, $note, $visibility, get_current_user_id() );
+			}
+
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'   => 'woo-wallet-withdrawals',
+						'action' => 'view',
+						'id'     => $id,
+					),
+					admin_url( 'admin.php' )
+				)
+			);
+			exit();
+		}
+
+		/**
+		 * Handle the admin "mark paid" / "reject" action from the request detail screen.
 		 */
 		public function handle_admin_process_request() {
 			if ( ! current_user_can( get_wallet_user_capability() ) ) {
@@ -616,65 +1180,80 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			}
 			check_admin_referer( 'woo_wallet_withdrawal_process' );
 
-			$id     = isset( $_POST['withdrawal_id'] ) ? absint( $_POST['withdrawal_id'] ) : 0;
-			$action = isset( $_POST['ww_action'] ) ? sanitize_key( wp_unslash( $_POST['ww_action'] ) ) : '';
-			$note   = isset( $_POST['admin_note'] ) ? sanitize_text_field( wp_unslash( $_POST['admin_note'] ) ) : '';
+			$admin_id        = get_current_user_id();
+			$id              = isset( $_POST['withdrawal_id'] ) ? absint( $_POST['withdrawal_id'] ) : 0;
+			$action          = isset( $_POST['ww_action'] ) ? sanitize_key( wp_unslash( $_POST['ww_action'] ) ) : '';
+			$reference_no    = isset( $_POST['reference_no'] ) ? sanitize_text_field( wp_unslash( $_POST['reference_no'] ) ) : '';
+			$note            = isset( $_POST['note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['note'] ) ) : '';
+			$note_visibility = isset( $_POST['note_visibility'] ) && 'public' === $_POST['note_visibility'] ? 'public' : 'private';
 
 			$request = $id ? self::get_request( $id ) : null;
-			$notice  = array( 'type' => 'error', 'message' => __( 'Withdrawal request not found.', 'woo-wallet' ) );
+			$notice  = array(
+				'type'    => 'error',
+				'message' => __( 'Withdrawal request not found.', 'woo-wallet' ),
+			);
 
 			if ( $request && 'pending' !== $request->status ) {
-				$notice = array( 'type' => 'error', 'message' => __( 'This request has already been processed.', 'woo-wallet' ) );
-			} elseif ( $request && 'paid' === $action ) {
-				global $wpdb;
-				$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-					self::table(),
-					array(
-						'status'       => 'paid',
-						'admin_note'   => $note,
-						'date_updated' => current_time( 'mysql' ),
-					),
-					array( 'id' => $request->id ),
-					array( '%s', '%s', '%s' ),
-					array( '%d' )
-				);
-				do_action( 'woo_wallet_withdrawal_paid', $request->id, $request->user_id );
 				$notice = array(
-					'type'    => 'success',
-					/* translators: %d: withdrawal request id */
-					'message' => sprintf( __( 'Withdrawal request #%d marked as paid.', 'woo-wallet' ), $request->id ),
+					'type'    => 'error',
+					'message' => __( 'This request has already been processed.', 'woo-wallet' ),
 				);
-			} elseif ( $request && 'reject' === $action ) {
-				$refund_amount = (float) $request->amount + (float) $request->charge;
-				/* translators: %d: withdrawal request id */
-				$credit_note = sprintf( __( 'Withdrawal request #%d rejected - funds returned', 'woo-wallet' ), $request->id );
-				if ( $note ) {
-					$credit_note .= ' (' . $note . ')';
-				}
-				$credit_id = woo_wallet()->wallet->credit( $request->user_id, $refund_amount, $credit_note, array( 'category' => 'withdrawal_refund' ) );
+			} elseif ( $request && in_array( $action, array( 'paid', 'reject' ), true ) ) {
+				$receipt = self::maybe_handle_receipt_upload( 'receipt' );
 
 				global $wpdb;
-				$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-					self::table(),
-					array(
-						'status'       => 'rejected',
-						'admin_note'   => $note,
-						'date_updated' => current_time( 'mysql' ),
-					),
-					array( 'id' => $request->id ),
-					array( '%s', '%s', '%s' ),
-					array( '%d' )
+				$update = array(
+					'status'       => 'paid' === $action ? 'paid' : 'rejected',
+					'processed_by' => $admin_id,
+					'date_updated' => current_time( 'mysql' ),
 				);
-				do_action( 'woo_wallet_withdrawal_rejected', $request->id, $request->user_id, $credit_id );
-				$notice = array(
-					'type'    => 'success',
+				$formats = array( '%s', '%d', '%s' );
+				if ( $reference_no ) {
+					$update['reference_no'] = $reference_no;
+					$formats[]              = '%s';
+				}
+				if ( $receipt['id'] ) {
+					$update['receipt_id'] = $receipt['id'];
+					$formats[]             = '%d';
+				}
+				$wpdb->update( self::table(), $update, array( 'id' => $request->id ), $formats, array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+
+				if ( $note ) {
+					self::add_note( $request->id, $note, $note_visibility, $admin_id );
+				}
+
+				if ( 'paid' === $action ) {
+					do_action( 'woo_wallet_withdrawal_paid', $request->id, $request->user_id );
+					$notice = array(
+						'type'    => 'success',
+						/* translators: %d: withdrawal request id */
+						'message' => sprintf( __( 'Withdrawal request #%d marked as paid.', 'woo-wallet' ), $request->id ),
+					);
+				} else {
+					$refund_amount = (float) $request->amount + (float) $request->charge;
 					/* translators: %d: withdrawal request id */
-					'message' => sprintf( __( 'Withdrawal request #%d rejected and funds returned to the customer wallet.', 'woo-wallet' ), $request->id ),
-				);
+					$credit_note = sprintf( __( 'Withdrawal request #%d rejected - funds returned', 'woo-wallet' ), $request->id );
+					$credit_id   = woo_wallet()->wallet->credit( $request->user_id, $refund_amount, $credit_note, array( 'category' => 'withdrawal_refund' ) );
+					do_action( 'woo_wallet_withdrawal_rejected', $request->id, $request->user_id, $credit_id );
+					$notice = array(
+						'type'    => 'success',
+						/* translators: %d: withdrawal request id */
+						'message' => sprintf( __( 'Withdrawal request #%d rejected and funds returned to the customer wallet.', 'woo-wallet' ), $request->id ),
+					);
+				}
 			}
 
-			set_transient( 'woo_wallet_withdrawal_admin_notice_' . get_current_user_id(), $notice, MINUTE_IN_SECONDS );
-			wp_safe_redirect( wp_get_referer() ? wp_get_referer() : admin_url( 'admin.php?page=woo-wallet-withdrawals' ) );
+			set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'   => 'woo-wallet-withdrawals',
+						'action' => 'view',
+						'id'     => $id,
+					),
+					admin_url( 'admin.php' )
+				)
+			);
 			exit();
 		}
 

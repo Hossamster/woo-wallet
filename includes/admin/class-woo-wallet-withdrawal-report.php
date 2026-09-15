@@ -2,10 +2,9 @@
 /**
  * Wallet withdrawal requests WP_List_Table.
  *
- * Admin review queue over the `woo_wallet_withdrawals` table. Each pending
- * row carries an inline "Mark paid" / "Reject" form (both submit to the same
- * `admin_post_woo_wallet_withdrawal_process` handler in
- * Woo_Wallet_Withdrawal::handle_admin_process_request()).
+ * Admin review queue over the `woo_wallet_withdrawals` table. Each row links
+ * to the request's detail screen (`Woo_Wallet_Withdrawal::render_admin_detail()`),
+ * which carries the notes thread and, while pending, the mark-paid/reject form.
  *
  * @package StandaleneTech
  * @since   1.7.1
@@ -43,12 +42,13 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 	 */
 	public function get_columns() {
 		return array(
+			'id'          => __( 'ID', 'woo-wallet' ),
 			'customer'    => __( 'Customer', 'woo-wallet' ),
 			'amount'      => __( 'Amount', 'woo-wallet' ),
 			'bank'        => __( 'Bank details', 'woo-wallet' ),
+			'requested_by' => __( 'Requested by', 'woo-wallet' ),
 			'status'      => __( 'Status', 'woo-wallet' ),
 			'date'        => __( 'Requested', 'woo-wallet' ),
-			'actions'     => __( 'Actions', 'woo-wallet' ),
 		);
 	}
 
@@ -103,6 +103,44 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 	}
 
 	/**
+	 * The URL to a request's detail screen.
+	 *
+	 * @param int $id Request id.
+	 * @return string
+	 */
+	private function detail_url( $id ) {
+		return add_query_arg(
+			array(
+				'page'   => 'woo-wallet-withdrawals',
+				'action' => 'view',
+				'id'     => $id,
+			),
+			admin_url( 'admin.php' )
+		);
+	}
+
+	/**
+	 * Row actions under the ID column (the primary column).
+	 *
+	 * @param object $item        Withdrawal row.
+	 * @param string $column_name Column key.
+	 * @return string
+	 */
+	protected function handle_row_actions( $item, $column_name, $primary ) {
+		if ( $primary !== $column_name ) {
+			return '';
+		}
+		$actions = array(
+			'view' => sprintf(
+				'<a href="%s">%s</a>',
+				esc_url( $this->detail_url( $item->id ) ),
+				'pending' === $item->status ? esc_html__( 'Review', 'woo-wallet' ) : esc_html__( 'View', 'woo-wallet' )
+			),
+		);
+		return $this->row_actions( $actions );
+	}
+
+	/**
 	 * Default column rendering.
 	 *
 	 * @param object $item        Withdrawal row.
@@ -111,6 +149,9 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 	 */
 	public function column_default( $item, $column_name ) {
 		switch ( $column_name ) {
+			case 'id':
+				return '<a href="' . esc_url( $this->detail_url( $item->id ) ) . '"><strong>#' . (int) $item->id . '</strong></a>';
+
 			case 'customer':
 				$user = get_userdata( $item->user_id );
 				return $user ? esc_html( $user->user_email ) : '#' . (int) $item->user_id;
@@ -138,6 +179,21 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 				}
 				return implode( '<br />', $lines );
 
+			case 'requested_by':
+				$created_by = (int) $item->created_by;
+				if ( $created_by && $created_by === (int) $item->user_id ) {
+					return esc_html__( 'Self-service', 'woo-wallet' );
+				}
+				if ( $created_by ) {
+					$staff = get_userdata( $created_by );
+					return esc_html( sprintf(
+						/* translators: %s: staff member name */
+						__( 'Staff: %s', 'woo-wallet' ),
+						$staff ? $staff->display_name : '#' . $created_by
+					) );
+				}
+				return '&ndash;';
+
 			case 'status':
 				$labels = array(
 					'pending'  => __( 'Pending', 'woo-wallet' ),
@@ -149,23 +205,6 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 
 			case 'date':
 				return esc_html( wc_string_to_datetime( $item->date_created )->date_i18n( wc_date_format() . ' ' . wc_time_format() ) );
-
-			case 'actions':
-				if ( 'pending' !== $item->status ) {
-					return ! empty( $item->admin_note ) ? esc_html( $item->admin_note ) : '&ndash;';
-				}
-				ob_start();
-				?>
-				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" class="woo-wallet-withdrawal-action-form">
-					<input type="hidden" name="action" value="woo_wallet_withdrawal_process" />
-					<input type="hidden" name="withdrawal_id" value="<?php echo esc_attr( $item->id ); ?>" />
-					<?php wp_nonce_field( 'woo_wallet_withdrawal_process' ); ?>
-					<input type="text" name="admin_note" placeholder="<?php esc_attr_e( 'Note (optional)', 'woo-wallet' ); ?>" style="width:100%;margin-bottom:4px;" />
-					<button type="submit" name="ww_action" value="paid" class="button button-primary" onclick="return confirm('<?php echo esc_js( __( 'Mark this withdrawal as paid? Make sure you have already sent the bank transfer.', 'woo-wallet' ) ); ?>');"><?php esc_html_e( 'Mark paid', 'woo-wallet' ); ?></button>
-					<button type="submit" name="ww_action" value="reject" class="button" onclick="return confirm('<?php echo esc_js( __( 'Reject this request? The reserved amount will be returned to the customer wallet.', 'woo-wallet' ) ); ?>');"><?php esc_html_e( 'Reject', 'woo-wallet' ); ?></button>
-				</form>
-				<?php
-				return ob_get_clean();
 		}
 		return '';
 	}

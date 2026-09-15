@@ -284,7 +284,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 			add_action( "load-$woo_wallet_users_hook", array( $this, 'handle_wallet_balance_adjustment' ) );
 			add_action( "load-$woo_wallet_users_hook", array( $this, 'add_woo_wallet_details' ) );
 
-			$woo_wallet_menu_page_hook_view = add_submenu_page( 'null', __( 'Woo Wallet', 'woo-wallet' ), __( 'Woo Wallet', 'woo-wallet' ), get_wallet_user_capability(), 'woo-wallet-transactions', array( $this, 'transaction_details_page' ) );
+			$woo_wallet_menu_page_hook_view = add_submenu_page( 'woo-wallet', __( 'Transactions', 'woo-wallet' ), __( 'Transactions', 'woo-wallet' ), get_wallet_user_capability(), 'woo-wallet-transactions', array( $this, 'transaction_details_page' ) );
 			add_action( "load-$woo_wallet_menu_page_hook_view", array( $this, 'add_woo_wallet_transaction_details_option' ) );
 			// Actions submenu removed — actions are now part of the unified Settings page (React app).
 
@@ -324,7 +324,8 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 				woo_wallet_get_screen_id( 'woo-wallet-users' ),
 				woo_wallet_get_screen_id( 'woo-wallet-settings' ),
 				woo_wallet_get_screen_id( 'woo-wallet-referral-report' ),
-				woo_wallet_get_screen_id( 'woo-wallet-transactions', 'null' ),
+				woo_wallet_get_screen_id( 'woo-wallet-transactions' ),
+				woo_wallet_get_screen_id( 'woo-wallet-withdrawals' ),
 			);
 		}
 
@@ -776,16 +777,21 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 				: strtoupper( (string) get_option( 'woocommerce_currency', 'USD' ) );
 			?>
 			<div class="wrap">
-				<h2><?php esc_html_e( 'Transaction details', 'woo-wallet' ); ?> <a style="text-decoration: none;" href="<?php echo esc_url( add_query_arg( array( 'page' => 'woo-wallet-users' ), admin_url( 'admin.php' ) ) ); ?>"><span class="dashicons dashicons-editor-break" style="vertical-align: middle;"></span></a></h2>
+				<h2><?php esc_html_e( 'Transactions', 'woo-wallet' ); ?> <a style="text-decoration: none;" href="<?php echo esc_url( add_query_arg( array( 'page' => 'woo-wallet-users' ), admin_url( 'admin.php' ) ) ); ?>"><span class="dashicons dashicons-editor-break" style="vertical-align: middle;"></span></a></h2>
 				<?php do_action( 'woo_wallet_admin_page_header' ); ?>
-				<p>
-				<?php
-				esc_html_e( 'Current wallet balance: ', 'woo-wallet' );
-				echo woo_wallet()->wallet->get_wallet_balance( $user_id, 'view', $base_currency ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-				?>
-				</p>
+				<?php if ( null !== $user_id && '' !== $user_id ) : ?>
+					<p>
+					<?php
+					esc_html_e( 'Current wallet balance: ', 'woo-wallet' );
+					echo woo_wallet()->wallet->get_wallet_balance( $user_id, 'view', $base_currency ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+					?>
+					</p>
+				<?php else : ?>
+					<p><?php esc_html_e( 'Every wallet credit and debit across every customer, newest first. Use the filters to narrow down to one customer, a category (e.g. transfers), or a date range.', 'woo-wallet' ); ?></p>
+				<?php endif; ?>
 				<?php do_action( 'before_woo_wallet_transaction_details_page', $user_id ); ?>
 				<form id="posts-filter" method="get">
+					<input type="hidden" name="page" value="woo-wallet-transactions" />
 					<?php $this->transaction_details_table->display(); ?>
 				</form>
 				<div id="ajax-response"></div>

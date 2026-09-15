@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.1
+Stable tag: 1.7.2
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -116,10 +116,18 @@ Yes, once enabled under Axfit Wallet → Settings → Withdrawal. Customers subm
 
 == Changelog ==
 
+= v1.7.2 =
+* New - Store-wide Transactions screen (Axfit Wallet → Transactions, now visible in the sidebar): every credit/debit across every customer, filterable by customer, category and date range — no need to open a customer's own statement to see who transferred to whom.
+* New - Admin can log a withdrawal manually on a customer's behalf (Axfit Wallet → Withdrawals → Create Withdrawal) for phone/offline requests; the record is attributed to the staff member who created it and, separately, to whoever marks it paid or rejects it.
+* New - Withdrawal requests can carry a bank transfer reference number and an uploaded receipt (PDF/PNG/JPG), plus a running thread of notes — each marked private (staff only) or public (shown to the customer in their withdrawal history).
+
 = v1.7.1 =
 * New - Wallet withdrawal requests: customers can ask for part of their wallet balance to be paid out to a bank account (bank dropdown, beneficiary name, account number, optional IBAN) from a new "Withdraw" tab on the wallet dashboard. Requested funds are reserved from the wallet immediately; admins review, approve or reject requests under Axfit Wallet → Withdrawals. Configure minimum/maximum amounts, an optional charge, and the bank list under Axfit Wallet → Settings → Withdrawal.
 
 == Upgrade Notice ==
+
+= 1.7.2 =
+Adds a store-wide Transactions screen, manual/staff-attributed withdrawal creation, and receipt/reference/notes on withdrawal requests.
 
 = 1.7.1 =
 Adds wallet withdrawal requests to bank accounts (off by default — enable it under Axfit Wallet → Settings → Withdrawal).

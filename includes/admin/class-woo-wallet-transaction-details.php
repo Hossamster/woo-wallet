@@ -2,7 +2,10 @@
 /**
  * Wallet transaction details WP_List_Table
  *
- * Display wallet transaction details page.
+ * Store-wide (or single-customer, when linked to with `&user_id=`) ledger
+ * browser: every credit/debit across every wallet, filterable by customer,
+ * category and date range. This is what answers "who transferred to whom
+ * and when" without having to open each customer's own statement.
  *
  * @package StandaleneTech
  */
@@ -14,7 +17,7 @@ if ( ! class_exists( 'WP_List_Table' ) ) {
 class Woo_Wallet_Transaction_Details extends WP_List_Table {
 
 	/**
-	 * Total number of found users for the current query
+	 * Total number of found transactions for the current query
 	 *
 	 * @since 3.1.0
 	 * @var int
@@ -42,6 +45,7 @@ class Woo_Wallet_Transaction_Details extends WP_List_Table {
 			array(
 				'name'           => __( 'Name', 'woo-wallet' ),
 				'type'           => __( 'Type', 'woo-wallet' ),
+				'category'       => __( 'Category', 'woo-wallet' ),
 				'amount'         => __( 'Amount', 'woo-wallet' ),
 				'details'        => __( 'Details', 'woo-wallet' ),
 				'created_by'     => __( 'Created By', 'woo-wallet' ),
@@ -49,6 +53,69 @@ class Woo_Wallet_Transaction_Details extends WP_List_Table {
 				'transaction_id' => __( 'ID', 'woo-wallet' ),
 			)
 		);
+	}
+
+	/**
+	 * Translate the current $_GET filters into `get_wallet_transactions()` args.
+	 *
+	 * Shared by the list table and its count query. Returns false when a
+	 * customer was searched for but not found, so the caller can render an
+	 * empty result instead of silently falling back to "everyone".
+	 *
+	 * @return array|false
+	 */
+	public function get_filter_args() {
+		// The single-customer deep link (from "View all transactions" elsewhere
+		// in the admin) always wins over the browse-all filter row.
+		$linked_user_id = filter_input( INPUT_GET, 'user_id' );
+		if ( null !== $linked_user_id && '' !== $linked_user_id ) {
+			return array( 'user_id' => absint( $linked_user_id ) );
+		}
+
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended
+		$who      = isset( $_GET['transaction_user'] ) ? sanitize_text_field( wp_unslash( $_GET['transaction_user'] ) ) : '';
+		$category = isset( $_GET['transaction_category'] ) ? sanitize_key( wp_unslash( $_GET['transaction_category'] ) ) : '';
+		$after    = isset( $_GET['transaction_after'] ) ? sanitize_text_field( wp_unslash( $_GET['transaction_after'] ) ) : '';
+		$before   = isset( $_GET['transaction_before'] ) ? sanitize_text_field( wp_unslash( $_GET['transaction_before'] ) ) : '';
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+
+		$args = array( 'user_id' => 0 );
+
+		if ( '' !== $who ) {
+			$user_id = self::resolve_user( $who );
+			if ( ! $user_id ) {
+				return false;
+			}
+			$args['user_id'] = $user_id;
+		}
+		if ( '' !== $category ) {
+			$args['category'] = $category;
+		}
+		if ( '' !== $after && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $after ) ) {
+			$args['after'] = $after . ' 00:00:00';
+		}
+		if ( '' !== $before && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $before ) ) {
+			$args['before'] = $before . ' 23:59:59';
+		}
+		return $args;
+	}
+
+	/**
+	 * Resolve a customer search string (id, login or email) to a user id.
+	 *
+	 * @param string $who Search string.
+	 * @return int User id, or 0 when not found.
+	 */
+	private static function resolve_user( $who ) {
+		if ( is_numeric( $who ) ) {
+			$user = get_user_by( 'id', absint( $who ) );
+			return $user ? (int) $user->ID : 0;
+		}
+		$user = get_user_by( 'login', $who );
+		if ( ! $user ) {
+			$user = get_user_by( 'email', $who );
+		}
+		return $user ? (int) $user->ID : 0;
 	}
 
 	/**
@@ -109,29 +176,36 @@ class Woo_Wallet_Transaction_Details extends WP_List_Table {
 	 * @return Array
 	 */
 	private function table_data( $lower = 0, $uper = 10 ) {
-		global $wpdb;
-		$data    = array();
-		$user_id = filter_input( INPUT_GET, 'user_id' );
-		if ( null === $user_id ) {
+		$data = array();
+		$args = $this->get_filter_args();
+		if ( false === $args ) {
+			$this->total_count = 0;
 			return $data;
 		}
-		$transactions      = get_wallet_transactions(
-			array(
-				'user_id' => $user_id,
-				'limit'   => $lower . ',' . $uper,
+
+		$transactions       = get_wallet_transactions(
+			array_merge(
+				$args,
+				array(
+					'limit'   => $lower . ',' . $uper,
+					'nocache' => true, // A store-wide monitoring screen must never show a stale cached page.
+				)
 			)
 		);
-		$this->total_count = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->base_prefix}woo_wallet_transactions WHERE user_id=%d", $user_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$this->total_count  = get_wallet_transactions_count( $args );
+
 		if ( ! empty( $transactions ) && is_array( $transactions ) ) {
 			foreach ( $transactions as $key => $transaction ) {
+				$user   = get_user_by( 'ID', $transaction->user_id );
 				$data[] = array(
 					'transaction_id' => $transaction->transaction_id,
-					'name'           => get_user_by( 'ID', $transaction->user_id )->display_name,
+					'name'           => $user ? $user->display_name : sprintf( '#%d', $transaction->user_id ),
 					'type'           => ( 'credit' === $transaction->type ) ? __( 'Credit', 'woo-wallet' ) : __( 'Debit', 'woo-wallet' ),
+					'category'       => function_exists( 'woo_wallet_get_transaction_type_label' ) ? woo_wallet_get_transaction_type_label( $transaction->category ) : $transaction->category,
 					'amount'         => wc_price( $transaction->amount, woo_wallet_wc_price_args( $transaction->user_id, array( 'currency' => $transaction->currency ) ) ),
 					'details'        => $transaction->details,
 					'created_by'     => $transaction->created_by,
-					'date'           => wc_string_to_datetime( $transaction->date )->date_i18n( wc_date_format() ),
+					'date'           => wc_string_to_datetime( $transaction->date )->date_i18n( wc_date_format() . ' ' . wc_time_format() ),
 				);
 			}
 		}
@@ -151,6 +225,7 @@ class Woo_Wallet_Transaction_Details extends WP_List_Table {
 			case 'transaction_id':
 			case 'name':
 			case 'type':
+			case 'category':
 			case 'date':
 				return esc_html( $item[ $column_name ] );
 			default:
@@ -185,9 +260,47 @@ class Woo_Wallet_Transaction_Details extends WP_List_Table {
 	 */
 	protected function column_created_by( $item ): void {
 		if ( $item['created_by'] ) {
-			echo '<a href="' . esc_url( add_query_arg( 'user_id', $item['created_by'], self_admin_url( 'user-edit.php' ) ) ) . '">' . esc_html( get_user_by( 'ID', $item['created_by'] )->display_name ) . '</a>';
+			$user = get_user_by( 'ID', $item['created_by'] );
+			echo '<a href="' . esc_url( add_query_arg( 'user_id', $item['created_by'], self_admin_url( 'user-edit.php' ) ) ) . '">' . esc_html( $user ? $user->display_name : '#' . $item['created_by'] ) . '</a>';
 		} else {
 			echo '-';
 		}
+	}
+
+	/**
+	 * Filter controls above the table — hidden on the single-customer deep
+	 * link view (`&user_id=`), where the customer is already fixed.
+	 *
+	 * @param string $which 'top' | 'bottom'.
+	 */
+	public function extra_tablenav( $which ) {
+		if ( 'top' !== $which ) {
+			return;
+		}
+		$linked_user_id = filter_input( INPUT_GET, 'user_id' );
+		if ( null !== $linked_user_id && '' !== $linked_user_id ) {
+			return;
+		}
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended
+		$who      = isset( $_GET['transaction_user'] ) ? sanitize_text_field( wp_unslash( $_GET['transaction_user'] ) ) : '';
+		$category = isset( $_GET['transaction_category'] ) ? sanitize_key( wp_unslash( $_GET['transaction_category'] ) ) : '';
+		$after    = isset( $_GET['transaction_after'] ) ? sanitize_text_field( wp_unslash( $_GET['transaction_after'] ) ) : '';
+		$before   = isset( $_GET['transaction_before'] ) ? sanitize_text_field( wp_unslash( $_GET['transaction_before'] ) ) : '';
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+		?>
+		<div class="alignleft actions">
+			<?php /* Relies on the enclosing <form id="posts-filter" method="get"> printed by Woo_Wallet_Admin::transaction_details_page() — no <form> here, to avoid nesting it. */ ?>
+			<input type="search" name="transaction_user" value="<?php echo esc_attr( $who ); ?>" placeholder="<?php esc_attr_e( 'Customer ID, login or email', 'woo-wallet' ); ?>" />
+			<select name="transaction_category">
+				<option value=""><?php esc_html_e( 'All categories', 'woo-wallet' ); ?></option>
+				<?php foreach ( (array) woo_wallet_get_transaction_types() as $slug => $cfg ) : ?>
+					<option value="<?php echo esc_attr( $slug ); ?>" <?php selected( $category, $slug ); ?>><?php echo esc_html( $cfg['label'] ); ?></option>
+				<?php endforeach; ?>
+			</select>
+			<input type="date" name="transaction_after" value="<?php echo esc_attr( $after ); ?>" title="<?php esc_attr_e( 'From date', 'woo-wallet' ); ?>" />
+			<input type="date" name="transaction_before" value="<?php echo esc_attr( $before ); ?>" title="<?php esc_attr_e( 'To date', 'woo-wallet' ); ?>" />
+			<?php submit_button( __( 'Filter', 'woo-wallet' ), '', 'filter_action', false ); ?>
+		</div>
+		<?php
 	}
 }

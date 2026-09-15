@@ -427,3 +427,16 @@ function woo_wallet_update_171_db_schema() {
 	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 	dbDelta( Woo_Wallet_Install::get_withdrawals_schema() );
 }
+
+/**
+ * 1.7.2: add staff-attribution/reference/receipt columns to
+ * `woo_wallet_withdrawals` (created_by, processed_by, reference_no,
+ * receipt_id) and create the `woo_wallet_withdrawal_notes` table.
+ *
+ * @return void
+ */
+function woo_wallet_update_172_db_schema() {
+	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+	dbDelta( Woo_Wallet_Install::get_withdrawals_schema() );
+	dbDelta( Woo_Wallet_Install::get_withdrawal_notes_schema() );
+}

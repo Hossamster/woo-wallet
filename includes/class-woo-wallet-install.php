@@ -58,6 +58,9 @@ class Woo_Wallet_Install {
 		'1.7.1'  => array(
 			'woo_wallet_update_171_db_schema',
 		),
+		'1.7.2'  => array(
+			'woo_wallet_update_172_db_schema',
+		),
 	);
 	/**
 	 * Plugin install
@@ -132,6 +135,7 @@ class Woo_Wallet_Install {
         ) ENGINE=InnoDB $collate;";
 		$tables .= "\n" . self::get_referrals_schema();
 		$tables .= "\n" . self::get_withdrawals_schema();
+		$tables .= "\n" . self::get_withdrawal_notes_schema();
 		return $tables;
 	}
 
@@ -218,14 +222,53 @@ class Woo_Wallet_Install {
             beneficiary_name varchar(191 ) NOT NULL DEFAULT '',
             account_number varchar(191 ) NOT NULL DEFAULT '',
             iban varchar(64 ) NULL,
+            reference_no varchar(191 ) NOT NULL DEFAULT '',
+            receipt_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
             status varchar(20 ) NOT NULL DEFAULT 'pending',
             admin_note text NULL,
+            created_by BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            processed_by BIGINT UNSIGNED NOT NULL DEFAULT 0,
             date_created timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
             date_updated datetime NULL,
             PRIMARY KEY  (id ),
             KEY user_id (user_id ),
             KEY status (status ),
             KEY idx_user_status (user_id, status )
+        ) ENGINE=InnoDB $collate;";
+	}
+
+	/**
+	 * Withdrawal request notes table schema.
+	 *
+	 * A withdrawal request can carry more than one note (a receipt reference
+	 * added at payout time, a follow-up comment, a rejection reason, ...), and
+	 * some are meant for internal eyes only while others should show up in the
+	 * customer's own withdrawal history — hence a one-to-many table with a
+	 * `visibility` flag rather than a single `admin_note` column.
+	 *
+	 * Kept as a separate method so the 1.7.2 upgrade migration can create the
+	 * table on existing installs without re-running the full schema.
+	 *
+	 * @global object $wpdb
+	 * @return string
+	 */
+	public static function get_withdrawal_notes_schema() {
+		global $wpdb;
+		$collate = '';
+
+		if ( $wpdb->has_cap( 'collation' ) ) {
+			$collate = $wpdb->get_charset_collate();
+		}
+
+		return "CREATE TABLE {$wpdb->base_prefix}woo_wallet_withdrawal_notes (
+            id BIGINT UNSIGNED NOT NULL auto_increment,
+            withdrawal_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            note text NOT NULL,
+            visibility varchar(10 ) NOT NULL DEFAULT 'private',
+            created_by BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            date_created timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY  (id ),
+            KEY withdrawal_id (withdrawal_id )
         ) ENGINE=InnoDB $collate;";
 	}
 

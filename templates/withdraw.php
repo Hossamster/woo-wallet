@@ -10,7 +10,7 @@
  * happen. When this occurs the version of the template file will be bumped and
  * the readme will list any important changes.
  *
- * @version 1.7.1
+ * @version 1.7.2
  * @package StandaleneTech
  */
 
@@ -91,16 +91,24 @@ $ww_status_labels = array(
 					<th scope="col"><?php esc_html_e( 'Date', 'woo-wallet' ); ?></th>
 					<th scope="col" class="ww-stmt-num"><?php esc_html_e( 'Amount', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Bank', 'woo-wallet' ); ?></th>
+					<th scope="col"><?php esc_html_e( 'Reference', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Status', 'woo-wallet' ); ?></th>
 				</tr>
 			</thead>
 			<tbody>
 				<?php foreach ( $ww_history as $ww_row ) : ?>
+					<?php $ww_public_notes = Woo_Wallet_Withdrawal::get_notes( $ww_row->id, 'public' ); ?>
 					<tr>
 						<td data-label="<?php esc_attr_e( 'Date', 'woo-wallet' ); ?>"><?php echo esc_html( wc_string_to_datetime( $ww_row->date_created )->date_i18n( wc_date_format() ) ); ?></td>
 						<td class="ww-stmt-num" data-label="<?php esc_attr_e( 'Amount', 'woo-wallet' ); ?>"><?php echo wp_kses_post( wc_price( (float) $ww_row->amount, array( 'currency' => $ww_row->currency ? $ww_row->currency : get_option( 'woocommerce_currency' ) ) ) ); ?></td>
 						<td data-label="<?php esc_attr_e( 'Bank', 'woo-wallet' ); ?>"><?php echo esc_html( $ww_row->bank_name ); ?></td>
-						<td data-label="<?php esc_attr_e( 'Status', 'woo-wallet' ); ?>"><?php echo esc_html( isset( $ww_status_labels[ $ww_row->status ] ) ? $ww_status_labels[ $ww_row->status ] : $ww_row->status ); ?></td>
+						<td data-label="<?php esc_attr_e( 'Reference', 'woo-wallet' ); ?>"><?php echo $ww_row->reference_no ? esc_html( $ww_row->reference_no ) : '&ndash;'; ?></td>
+						<td data-label="<?php esc_attr_e( 'Status', 'woo-wallet' ); ?>">
+							<?php echo esc_html( isset( $ww_status_labels[ $ww_row->status ] ) ? $ww_status_labels[ $ww_row->status ] : $ww_row->status ); ?>
+							<?php foreach ( $ww_public_notes as $ww_note ) : ?>
+								<br /><small><?php echo esc_html( $ww_note->note ); ?></small>
+							<?php endforeach; ?>
+						</td>
 					</tr>
 				<?php endforeach; ?>
 			</tbody>
