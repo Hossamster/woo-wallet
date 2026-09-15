@@ -29,9 +29,10 @@ $ww_history    = Woo_Wallet_Withdrawal::get_requests(
 	)
 );
 $ww_status_labels = array(
-	'pending'  => __( 'Pending', 'woo-wallet' ),
-	'paid'     => __( 'Paid', 'woo-wallet' ),
-	'rejected' => __( 'Rejected', 'woo-wallet' ),
+	'pending'    => __( 'Pending', 'woo-wallet' ),
+	'processing' => __( 'Pending', 'woo-wallet' ), // Transient internal state; shown to the customer the same as pending.
+	'paid'       => __( 'Paid', 'woo-wallet' ),
+	'rejected'   => __( 'Rejected', 'woo-wallet' ),
 );
 ?>
 <!-- Withdraw Form -->

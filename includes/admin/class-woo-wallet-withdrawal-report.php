@@ -196,9 +196,14 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 
 			case 'status':
 				$labels = array(
-					'pending'  => __( 'Pending', 'woo-wallet' ),
-					'paid'     => __( 'Paid', 'woo-wallet' ),
-					'rejected' => __( 'Rejected', 'woo-wallet' ),
+					'pending'    => __( 'Pending', 'woo-wallet' ),
+					// Transient: only set while a Reject is actively being
+					// processed (between claiming the row and the refund
+					// resolving). Should never be visible for more than an
+					// instant — see handle_admin_process_request().
+					'processing' => __( 'Processing', 'woo-wallet' ),
+					'paid'       => __( 'Paid', 'woo-wallet' ),
+					'rejected'   => __( 'Rejected', 'woo-wallet' ),
 				);
 				$label = isset( $labels[ $item->status ] ) ? $labels[ $item->status ] : $item->status;
 				return '<span class="woo-wallet-withdrawal-status woo-wallet-withdrawal-status--' . esc_attr( $item->status ) . '">' . esc_html( $label ) . '</span>';
