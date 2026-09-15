@@ -55,6 +55,9 @@ class Woo_Wallet_Install {
 		'1.6.4'  => array(
 			'woo_wallet_update_164_flag_legacy_currency_normalize',
 		),
+		'1.7.1'  => array(
+			'woo_wallet_update_171_db_schema',
+		),
 	);
 	/**
 	 * Plugin install
@@ -128,6 +131,7 @@ class Woo_Wallet_Install {
             KEY meta_key (meta_key(32 ) )
         ) ENGINE=InnoDB $collate;";
 		$tables .= "\n" . self::get_referrals_schema();
+		$tables .= "\n" . self::get_withdrawals_schema();
 		return $tables;
 	}
 
@@ -178,6 +182,53 @@ class Woo_Wallet_Install {
             KEY blog_id (blog_id )
         ) ENGINE=InnoDB $collate;";
 	}
+	/**
+	 * Withdrawal request table schema.
+	 *
+	 * Each row is one customer withdrawal request. The requested amount (plus
+	 * any configured charge) is reserved out of the wallet immediately on
+	 * request — `transaction_id` points at that debit ledger row — so the
+	 * balance the customer sees never advertises funds that are already
+	 * earmarked for payout. `status` starts 'pending'; an admin moves it to
+	 * 'paid' once the bank transfer is made manually, or to 'rejected', which
+	 * credits the reserved amount back to the wallet.
+	 *
+	 * Kept as a separate method so the 1.7.1 upgrade migration can create the
+	 * table on existing installs without re-running the full schema.
+	 *
+	 * @global object $wpdb
+	 * @return string
+	 */
+	public static function get_withdrawals_schema() {
+		global $wpdb;
+		$collate = '';
+
+		if ( $wpdb->has_cap( 'collation' ) ) {
+			$collate = $wpdb->get_charset_collate();
+		}
+
+		return "CREATE TABLE {$wpdb->base_prefix}woo_wallet_withdrawals (
+            id BIGINT UNSIGNED NOT NULL auto_increment,
+            user_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            transaction_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            amount DECIMAL( 16,8 ) NOT NULL DEFAULT 0,
+            charge DECIMAL( 16,8 ) NOT NULL DEFAULT 0,
+            currency varchar(20 ) NOT NULL DEFAULT '',
+            bank_name varchar(191 ) NOT NULL DEFAULT '',
+            beneficiary_name varchar(191 ) NOT NULL DEFAULT '',
+            account_number varchar(191 ) NOT NULL DEFAULT '',
+            iban varchar(64 ) NULL,
+            status varchar(20 ) NOT NULL DEFAULT 'pending',
+            admin_note text NULL,
+            date_created timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            date_updated datetime NULL,
+            PRIMARY KEY  (id ),
+            KEY user_id (user_id ),
+            KEY status (status ),
+            KEY idx_user_status (user_id, status )
+        ) ENGINE=InnoDB $collate;";
+	}
+
 	/**
 	 * Create rechargeable product if not exist
 	 */

@@ -600,7 +600,7 @@ if ( ! class_exists( 'Woo_Wallet_Reports' ) ) {
 				echo '<span class="twr-pro__benefit">' . esc_html( $slot['benefit'] ) . '</span>';
 			}
 
-			echo '<span class="twr-pro__badge"><span class="dashicons dashicons-lock"></span>' . esc_html__( 'TeraWallet Pro', 'woo-wallet' ) . '</span>';
+			echo '<span class="twr-pro__badge"><span class="dashicons dashicons-lock"></span>' . esc_html__( 'Axfit Wallet Pro', 'woo-wallet' ) . '</span>';
 			echo '</button>';
 		}
 
@@ -666,7 +666,7 @@ if ( ! class_exists( 'Woo_Wallet_Reports' ) ) {
 					'<button type="button" class="twr-modal__close" data-twr-modal-close aria-label="%s">&times;</button>',
 					esc_attr__( 'Close', 'woo-wallet' )
 				);
-				echo '<span class="twr-modal__badge"><span class="dashicons dashicons-lock" aria-hidden="true"></span>' . esc_html__( 'TeraWallet Pro', 'woo-wallet' ) . '</span>';
+				echo '<span class="twr-modal__badge"><span class="dashicons dashicons-lock" aria-hidden="true"></span>' . esc_html__( 'Axfit Wallet Pro', 'woo-wallet' ) . '</span>';
 				echo '<h2 class="twr-modal__title">' . esc_html( $labels[ $id ] ) . '</h2>';
 				echo '<p class="twr-modal__body">' . esc_html( $slot['body'] ) . '</p>';
 
@@ -681,7 +681,7 @@ if ( ! class_exists( 'Woo_Wallet_Reports' ) ) {
 				printf(
 					'<a class="twr-modal__cta" href="%1$s" target="_blank" rel="noopener noreferrer">%2$s</a>',
 					esc_url( woo_wallet_pro_url( 'dashboard-' . str_replace( '_', '-', $id ) ) ),
-					esc_html__( 'See TeraWallet Pro', 'woo-wallet' )
+					esc_html__( 'See Axfit Wallet Pro', 'woo-wallet' )
 				);
 				echo '</div></dialog>';
 			}
@@ -821,7 +821,7 @@ if ( ! class_exists( 'Woo_Wallet_Reports' ) ) {
 					esc_html__( 'What this report shows', 'woo-wallet' )
 				);
 			} else {
-				echo '<p>' . esc_html__( 'This report is available in TeraWallet Pro.', 'woo-wallet' ) . '</p>';
+				echo '<p>' . esc_html__( 'This report is available in Axfit Wallet Pro.', 'woo-wallet' ) . '</p>';
 			}
 
 			echo '</div>';

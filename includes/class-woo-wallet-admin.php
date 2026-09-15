@@ -274,8 +274,8 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 		public function admin_menu() {
 			$reports_cap = apply_filters( 'woo_wallet_reports_capability', 'manage_woocommerce' );
 
-			// Top-level TeraWallet menu now lands on the wallet Dashboard (Reports).
-			add_menu_page( __( 'TeraWallet', 'woo-wallet' ), __( 'TeraWallet', 'woo-wallet' ), $reports_cap, 'woo-wallet', array( $this, 'reports_page' ), '', 59 );
+			// Top-level Axfit Wallet menu now lands on the wallet Dashboard (Reports).
+			add_menu_page( __( 'Axfit Wallet', 'woo-wallet' ), __( 'Axfit Wallet', 'woo-wallet' ), $reports_cap, 'woo-wallet', array( $this, 'reports_page' ), '', 59 );
 			// Explicit label for the auto-generated first submenu (shares the parent slug).
 			add_submenu_page( 'woo-wallet', __( 'Dashboard', 'woo-wallet' ), __( 'Dashboard', 'woo-wallet' ), $reports_cap, 'woo-wallet', array( $this, 'reports_page' ) );
 
@@ -867,7 +867,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 						} else {
 							$response = array(
 								'type'    => 'error',
-								'message' => __( 'There may be some issue with database connection. Please deactivate TeraWallet plugin and activate again.', 'woo-wallet' ),
+								'message' => __( 'There may be some issue with database connection. Please deactivate Axfit Wallet plugin and activate again.', 'woo-wallet' ),
 							);
 						}
 					} elseif ( 'credit' === $payment_type ) {
@@ -893,7 +893,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 						} else {
 							$response = array(
 								'type'    => 'error',
-								'message' => __( 'There may be some issue with database connection. Please deactivate TeraWallet plugin and activate again.', 'woo-wallet' ),
+								'message' => __( 'There may be some issue with database connection. Please deactivate Axfit Wallet plugin and activate again.', 'woo-wallet' ),
 							);
 						}
 					}
@@ -1110,29 +1110,6 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 		 * @return string
 		 */
 		public function admin_footer_text( $footer_text ) {
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
-				return $footer_text;
-			}
-			$current_screen = get_current_screen();
-			if ( isset( $current_screen->id ) && in_array( $current_screen->id, $this->wallet_own_screen_ids(), true ) ) {
-				if ( ! get_option( 'woocommerce_wallet_admin_footer_text_rated' ) ) {
-					$footer_text = sprintf(
-						/* translators: Plugin name */
-						__( 'If you like %1$s please leave us a %2$s rating. A huge thanks in advance!', 'woo-wallet' ),
-						sprintf( '<strong>%s</strong>', esc_html__( 'TeraWallet', 'woo-wallet' ) ),
-						'<a href="https://wordpress.org/support/plugin/woo-wallet/reviews?rate=5#new-post" target="_blank" class="wc-rating-link" data-rated="' . esc_attr__( 'Thanks :)', 'woo-wallet' ) . '">&#9733;&#9733;&#9733;&#9733;&#9733;</a>'
-					);
-					$script = "
-					jQuery( 'a.wc-rating-link' ).click( function() {
-						jQuery.post( '" . WC()->ajax_url() . "', { action: 'woocommerce_wallet_rated' } );
-						jQuery( this ).parent().text( jQuery( this ).data( 'rated' ) );
-					});
-				";
-					wp_add_inline_script( 'wc-admin-footer-rating', $script );
-				} else {
-					$footer_text = __( 'Thank you for using TeraWallet.', 'woo-wallet' );
-				}
-			}
 			return $footer_text;
 		}
 
@@ -1403,7 +1380,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 						echo wp_kses_post(
 							sprintf(
 								/* translators: 1: settings page link open, 2: settings page link close */
-								__( '<strong>TeraWallet 1.6.1:</strong> Cashback can now be clawed back when an order is refunded. This is <strong>off by default</strong> — %1$senable it in Settings → Wallet Credit → Refund Clawback%2$s if you want it.', 'woo-wallet' ),
+								__( '<strong>Axfit Wallet 1.6.1:</strong> Cashback can now be clawed back when an order is refunded. This is <strong>off by default</strong> — %1$senable it in Settings → Wallet Credit → Refund Clawback%2$s if you want it.', 'woo-wallet' ),
 								'<a href="' . esc_url( $settings_url ) . '">',
 								'</a>'
 							)
@@ -1436,7 +1413,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 						echo wp_kses_post(
 							sprintf(
 								/* translators: 1: settings page link open, 2: settings page link close */
-								__( '<strong>TeraWallet 1.6.1:</strong> Coupon cashback is now recomputed from the live order at credit time rather than trusting the checkout-frozen meta. For upgraded sites the legacy discount_total/total mutation is preserved via an internal flag. %1$sReview your cashback settings.%2$s', 'woo-wallet' ),
+								__( '<strong>Axfit Wallet 1.6.1:</strong> Coupon cashback is now recomputed from the live order at credit time rather than trusting the checkout-frozen meta. For upgraded sites the legacy discount_total/total mutation is preserved via an internal flag. %1$sReview your cashback settings.%2$s', 'woo-wallet' ),
 								'<a href="' . esc_url( $settings_url ) . '">',
 								'</a>'
 							)
@@ -1491,7 +1468,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 				return;
 			}
 			delete_transient( $transient_key );
-			echo '<div class="notice notice-error is-dismissible"><p><strong>' . esc_html__( 'TeraWallet: some users could not be purged.', 'woo-wallet' ) . '</strong></p><ul style="list-style:disc;margin-left:20px;">';
+			echo '<div class="notice notice-error is-dismissible"><p><strong>' . esc_html__( 'Axfit Wallet: some users could not be purged.', 'woo-wallet' ) . '</strong></p><ul style="list-style:disc;margin-left:20px;">';
 			foreach ( $errors as $error ) {
 				echo '<li>' . esc_html( $error ) . '</li>';
 			}

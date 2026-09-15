@@ -1,33 +1,29 @@
-=== Wallet for WooCommerce ===
-Contributors: standalonetech, subratamal, moumitaadak
+=== Axfit Wallet ===
 Tags: woocommerce wallet, cashback, store credit, partial payment, digital wallet
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.0
+Stable tag: 1.7.1
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
-✨ WooCommerce wallet with cashback rewards, store credit, partial payment & top-ups. Boost customer loyalty effortlessly.
+✨ WooCommerce wallet with cashback rewards, store credit, partial payment, top-ups & bank withdrawals. Boost customer loyalty effortlessly.
 
 == Description ==
 
-Maximize convenience and savings for your customers with **Wallet for WooCommerce** (TeraWallet). This all-in-one digital wallet and store credit system is specifically designed to streamline the checkout process and boost customer loyalty.
+Maximize convenience and savings for your customers with **Axfit Wallet**. This all-in-one digital wallet and store credit system is specifically designed to streamline the checkout process and boost customer loyalty.
 
-TeraWallet empowers your customers to deposit funds into their personal accounts, transfer money to other users, and make purchases effortlessly using their wallet balance. By reducing the need for repeated payment detail entries, you provide a frictionless shopping experience that encourages repeat business.
+Axfit Wallet empowers your customers to deposit funds into their personal accounts, transfer money to other users, request a payout to their bank account, and make purchases effortlessly using their wallet balance. By reducing the need for repeated payment detail entries, you provide a frictionless shopping experience that encourages repeat business.
 
-Beyond core wallet functionality, TeraWallet features a robust **Cashback Rewards System**. Incentivize purchases by offering rewards based on cart totals, specific products, or categories. You can even convert WooCommerce coupons into wallet rewards, providing a unique way to drive engagement.
+Beyond core wallet functionality, Axfit Wallet features a robust **Cashback Rewards System**. Incentivize purchases by offering rewards based on cart totals, specific products, or categories. You can even convert WooCommerce coupons into wallet rewards, providing a unique way to drive engagement.
 
-👉 **Try the live demo:** [https://demo.standalonetech.com/](https://demo.standalonetech.com/)
-👉 **Read full documentation:** [https://docs.standalonetech.com/](https://docs.standalonetech.com/)
-👉 **[Upgrade to Pro](https://standalonetech.com/product/woocommerce-wallet-pro/?utm_source=wordpress&utm_medium=plugin_page&utm_campaign=upgrade)** — unlock withdrawals, expiry, coupons, importer & AffiliateWP integration.
-
-== ✨ Why choose Wallet for WooCommerce? ==
+== ✨ Why choose Axfit Wallet? ==
 
 *   🚀 **Frictionless Checkout:** One-click payments via wallet balance reduce cart abandonment.
 *   💰 **Automated Cashback:** Automated rewards keep customers coming back for more.
 *   🏦 **Store Credit System:** Easily handle refunds by crediting the user's wallet instantly.
 *   🔄 **Wallet Transfers:** Allow customers to share funds with friends and family.
+*   🏧 **Bank Withdrawals:** Let customers cash out their wallet balance to a bank account.
 
 == 🛠 Features ==
 
@@ -43,6 +39,7 @@ Beyond core wallet functionality, TeraWallet features a robust **Cashback Reward
 *   🔄 **User Empowerment:**
     *   **Wallet Top-ups:** Customers can add funds via their dashboard using any supported payment method.
     *   **Peer-to-Peer Transfers:** Securely send wallet balance to other registered users via email.
+    *   **Bank Withdrawals:** Customers can request a payout of their wallet balance to a bank account (bank, beneficiary name, account number, optional IBAN), with an admin approval queue under Axfit Wallet → Withdrawals.
 *   🎁 **Engagement Rewards:** Credit users for specific actions:
     *   New user registration bonus.
     *   Daily login rewards.
@@ -64,18 +61,6 @@ Beyond core wallet functionality, TeraWallet features a robust **Cashback Reward
     *   [Aelia Currency Switcher](https://aelia.co/shop/currency-switcher-woocommerce/)
     *   **Generic fallback** for any other plugin that filters `woocommerce_currency` — active-currency detection still works, conversion falls open to the stored amount with an audit-log warning.
 
-== 🚀 Pro Features ==
-
-**[⭐ Upgrade to Pro](https://standalonetech.com/product/woocommerce-wallet-pro/?utm_source=wordpress&utm_medium=plugin_page&utm_campaign=upgrade)** to unlock advanced wallet features and specialized integrations:
-
-*   💸 **Wallet Withdrawal:** Allow customers to request withdrawals from their wallet balance to their bank or other payment methods.
-*   ⌛ **Wallet Expiry:** Set expiration dates for wallet balance or cashback to encourage timely spending.
-*   🎟️ **Wallet Coupons:** Create exclusive coupons that can only be redeemed into the user's wallet.
-*   📥 **Wallet Importer:** Easily bulk import wallet balances and transaction history from CSV files.
-*   🤝 **AffiliateWP Integration:** Automatically credit affiliate commissions directly to the user's wallet.
-*   🎂 **Milestone & Birthday Bonuses:** Credit the wallet when a customer's lifetime spend crosses a threshold you set, and once a year on their birthday.
-*   📊 **Breakage & Aging Reports:** See how much wallet credit is about to expire, how much never will be spent, plus withdrawal and coupon reporting on the Wallet Dashboard.
-
 == Installation ==
 
 = Minimum Requirements =
@@ -85,17 +70,13 @@ Beyond core wallet functionality, TeraWallet features a robust **Cashback Reward
 * WordPress 6.4 or greater is required
 * WooCommerce 7.2 or greater is required
 
-= Automatic installation =
-
-In your WordPress dashboard go to **Plugins > Add New**, search for "Wallet for WooCommerce" and click **Install Now**.
-
 = Manual installation =
 
 Upload the plugin folder to `/wp-content/plugins/` via FTP, then activate it from the Plugins menu.
 
 = Updating =
 
-Automatic updates should work like a charm; as always though, ensure you backup your site just in case.
+As always, ensure you backup your site before updating.
 
 If on the off-chance you do encounter issues with the wallet endpoints pages after an update you simply need to flush the permalinks by going to WordPress > Settings > Permalinks and hitting 'save'. That should return things to normal.
 
@@ -115,21 +96,10 @@ Yes! If enabled in settings, customers can use their wallet balance to pay for a
 Cashback is triggered by order status changes. You can configure which status (e.g., 'Completed' or 'Processing') triggers the reward in the plugin settings.
 
 = Why is the wallet not visible at checkout? =
-Ensure the Wallet gateway is enabled in **WooCommerce > Settings > Payments**. Also, check if "Hide if empty" is enabled in TeraWallet settings if the user has a zero balance.
+Ensure the Wallet gateway is enabled in **WooCommerce > Settings > Payments**. Also, check if "Hide if empty" is enabled in Axfit Wallet settings if the user has a zero balance.
 
-= Where can I get support? =
-You can ask for help in the [WordPress Plugin Forum](https://wordpress.org/support/plugin/woo-wallet) or email us at support@standalonetech.com.
-
-= Where is the REST API documentation? =
-You can find the documentation for our [Wallet REST API here](https://github.com/malsubrata/woo-wallet/wiki/API-V3).
-
-== External services ==
-
-TeraWallet shows a dismissible admin notice inviting the administrator to join the StandaloneTech mailing list (release, security and compatibility news, tips, and occasional product news).
-
-Nothing is sent unless the administrator ticks the consent box (unticked by default) and submits the form. Only then, once, the plugin sends the entered email address, the site URL, the TeraWallet version and the time consent was given to https://standalonetech.com. No store, customer, order or wallet data is ever sent. Unsubscribe from any email.
-
-[Terms of Service](https://standalonetech.com/terms-and-conditions/) · [Privacy Policy](https://standalonetech.com/privacy-policy/#plugin-mailing-list)
+= Can customers withdraw their wallet balance to a bank account? =
+Yes, once enabled under Axfit Wallet → Settings → Withdrawal. Customers submit a request from the "Withdraw" tab on their wallet dashboard; the amount is reserved immediately and an admin approves or rejects it under Axfit Wallet → Withdrawals.
 
 == Screenshots ==
 
@@ -146,13 +116,10 @@ Nothing is sent unless the administrator ticks the consent box (unticked by defa
 
 == Changelog ==
 
-= v1.7.0 (September 11, 2026) =
-* New - An optional, dismissible notice on TeraWallet's admin screens invites you to join the mailing list; nothing is sent unless you tick consent and submit.
-* Tweak - Refreshed the colours and type on the Upgrade to Pro banner for better readability.
-
-[See changelog for all versions](https://raw.githubusercontent.com/malsubrata/woo-wallet/master/changelog.txt).
+= v1.7.1 =
+* New - Wallet withdrawal requests: customers can ask for part of their wallet balance to be paid out to a bank account (bank dropdown, beneficiary name, account number, optional IBAN) from a new "Withdraw" tab on the wallet dashboard. Requested funds are reserved from the wallet immediately; admins review, approve or reject requests under Axfit Wallet → Withdrawals. Configure minimum/maximum amounts, an optional charge, and the bank list under Axfit Wallet → Settings → Withdrawal.
 
 == Upgrade Notice ==
 
-= 1.7.0 =
-Adds an optional, opt-in mailing list notice on admin screens (nothing sent unless you consent) and refreshes the Upgrade to Pro banner.
+= 1.7.1 =
+Adds wallet withdrawal requests to bank accounts (off by default — enable it under Axfit Wallet → Settings → Withdrawal).

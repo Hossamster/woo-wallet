@@ -416,3 +416,14 @@ function woo_wallet_update_163_db_schema() {
 function woo_wallet_update_164_flag_legacy_currency_normalize() {
 	update_option( 'woo_wallet_pending_legacy_currency_normalize', 1, false );
 }
+
+/**
+ * 1.7.1: create the `woo_wallet_withdrawals` table backing the wallet
+ * withdrawal request feature.
+ *
+ * @return void
+ */
+function woo_wallet_update_171_db_schema() {
+	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+	dbDelta( Woo_Wallet_Install::get_withdrawals_schema() );
+}

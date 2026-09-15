@@ -1,12 +1,10 @@
 <?php
 /**
- * Plugin Name: TeraWallet
- * Plugin URI: https://standalonetech.com/
- * Description: The leading wallet plugin for WooCommerce with partial payment, refunds, cashbacks and what not!
- * Version: 1.7.0
+ * Plugin Name: Axfit Wallet
+ * Description: Digital wallet for WooCommerce with partial payment, refunds, cashbacks, transfers and bank withdrawals.
+ * Version: 1.7.1
  * Requires Plugins: woocommerce
- * Author: StandaloneTech
- * Author URI: https://standalonetech.com/
+ * Author: Axfit
  * Text Domain: woo-wallet
  * Domain Path: /languages/
  * License: GPLv3
@@ -34,7 +32,7 @@ if ( ! defined( 'WOO_WALLET_ABSPATH' ) ) {
 
 // Define WOO_WALLET_PLUGIN_VERSION.
 if ( ! defined( 'WOO_WALLET_PLUGIN_VERSION' ) ) {
-	define( 'WOO_WALLET_PLUGIN_VERSION', '1.7.0' );
+	define( 'WOO_WALLET_PLUGIN_VERSION', '1.7.1' );
 }
 
 // Declare HPOS (custom order tables) compatibility.

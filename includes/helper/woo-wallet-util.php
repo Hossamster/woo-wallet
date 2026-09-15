@@ -42,24 +42,23 @@ if ( ! function_exists( 'woo_wallet_get_screen_id' ) ) {
 if ( ! function_exists( 'woo_wallet_pro_state' ) ) {
 
 	/**
-	 * Runtime state of the TeraWallet Pro plugin.
+	 * Runtime state of the upstream "Pro" add-on.
 	 *
-	 * Single source of truth for Pro detection. Every upsell surface in the
-	 * free plugin gates on this — do not re-implement the is_plugin_active()
-	 * check inline, or the gates drift apart and Pro customers start seeing
-	 * upsells on some screens but not others.
+	 * This fork has no separate paid tier and ships no upsell surface, so
+	 * every gate that reads this (locked report tabs, "Pro" badges, upgrade
+	 * links) is hard-pinned to 'licensed' — the same state the upstream
+	 * plugin uses to hide its upsells from customers who already bought Pro.
+	 * Reusing that existing gate is what turns every one of those surfaces
+	 * off without having to touch each call site individually.
+	 *
+	 * Single source of truth for Pro detection — every gate in the plugin
+	 * reads this rather than re-implementing the check inline.
 	 *
 	 * @since 1.6.11
 	 * @return string One of: 'not_installed' | 'unlicensed' | 'licensed'.
 	 */
 	function woo_wallet_pro_state() {
-		if ( ! function_exists( 'is_plugin_active' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/plugin.php';
-		}
-		if ( ! is_plugin_active( 'woo-wallet-pro/woo-wallet-pro.php' ) ) {
-			return 'not_installed';
-		}
-		return get_option( 'woo_wallet_pro_license_activated' ) ? 'licensed' : 'unlicensed';
+		return 'licensed';
 	}
 }
 
