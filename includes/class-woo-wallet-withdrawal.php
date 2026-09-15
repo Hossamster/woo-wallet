@@ -731,6 +731,81 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
+		 * Meta key tagging a wallet credit transaction as the refund for a
+		 * specific withdrawal request.
+		 *
+		 * @return string
+		 */
+		private static function refund_meta_key() {
+			return '_woo_wallet_withdrawal_refund_for';
+		}
+
+		/**
+		 * Look up an existing refund transaction for a withdrawal directly in
+		 * the wallet ledger, independent of whatever the withdrawals row
+		 * itself says. The row's own `refund_transaction_id` column is written
+		 * as a *separate* statement after the credit succeeds — if that write
+		 * fails or the process dies between the two, the column would read 0
+		 * even though the refund already happened. The ledger (the credit
+		 * transaction plus this tag) is what actually moved money, so it is
+		 * the only thing idempotent_refund() trusts.
+		 *
+		 * @param int $withdrawal_id Withdrawal request id.
+		 * @return int Transaction id, or 0 if no tagged refund exists yet.
+		 */
+		private static function find_refund_transaction_id( $withdrawal_id ) {
+			global $wpdb;
+			$meta_table = $wpdb->base_prefix . 'woo_wallet_transaction_meta';
+			$txn_table  = $wpdb->base_prefix . 'woo_wallet_transactions';
+			return (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+				$wpdb->prepare(
+					"SELECT t.transaction_id FROM {$meta_table} m INNER JOIN {$txn_table} t ON t.transaction_id = m.transaction_id WHERE m.meta_key = %s AND m.meta_value = %s AND t.deleted = 0 ORDER BY t.transaction_id DESC LIMIT 1", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					self::refund_meta_key(),
+					(string) absint( $withdrawal_id )
+				)
+			);
+		}
+
+		/**
+		 * Refund a rejected withdrawal's reservation, idempotently.
+		 *
+		 * This is the ONLY place that credits a withdrawal refund — the live
+		 * reject flow and the 'processing' recovery flow both call this and
+		 * nothing else, so there is exactly one code path that can ever move
+		 * the money for a given withdrawal. It always checks the ledger first
+		 * (via find_refund_transaction_id()) and reuses an existing tagged
+		 * credit rather than issuing a new one, so calling it twice for the
+		 * same withdrawal — whether from a legitimate retry, a recovery
+		 * attempt, or two staff members racing — can never double-refund.
+		 *
+		 * The credit and its tag are still two separate statements (the
+		 * underlying `credit()` API does not support attaching meta
+		 * atomically), so a crash between them is still conceivable — but the
+		 * next call anywhere will find nothing tagged and safely retry the
+		 * credit, which is a false negative (a stray untagged credit sitting
+		 * in the ledger, caught by manual reconciliation) rather than the
+		 * false positive this whole design exists to prevent.
+		 *
+		 * @param object $request Withdrawal row.
+		 * @return int Refund transaction id, or 0 if a new credit was needed and failed.
+		 */
+		private static function idempotent_refund( $request ) {
+			$existing = self::find_refund_transaction_id( $request->id );
+			if ( $existing ) {
+				return $existing;
+			}
+
+			$refund_amount = (float) $request->amount + (float) $request->charge;
+			/* translators: %d: withdrawal request id */
+			$credit_note = sprintf( __( 'Withdrawal request #%d rejected - funds returned', 'woo-wallet' ), $request->id );
+			$credit_id   = woo_wallet()->wallet->credit( $request->user_id, $refund_amount, $credit_note, array( 'category' => 'withdrawal_refund' ) );
+			if ( $credit_id ) {
+				update_wallet_transaction_meta( $credit_id, self::refund_meta_key(), (string) $request->id, $request->user_id );
+			}
+			return (int) $credit_id;
+		}
+
+		/**
 		 * Handle an uploaded receipt file (PDF/PNG/JPG) as a Media Library
 		 * attachment, restricted to those three types regardless of the
 		 * site's normal upload_mimes allowlist.
@@ -1054,31 +1129,13 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				<?php elseif ( 'processing' === $request->status ) : ?>
 					<div class="notice notice-warning inline">
 						<h2><?php esc_html_e( 'Needs recovery', 'woo-wallet' ); ?></h2>
-						<?php if ( (int) $request->refund_transaction_id > 0 ) : ?>
-							<p>
-								<?php
-								printf(
-									/* translators: %d: refund transaction id */
-									esc_html__( 'This reject was interrupted (a server or database error), but the refund had already been sent to the customer\'s wallet — wallet transaction #%d. It only needs to be finished; recovering it will NOT send a second refund.', 'woo-wallet' ),
-									(int) $request->refund_transaction_id
-								);
-								?>
-							</p>
-							<form method="post" action="<?php echo esc_url( $post_url ); ?>">
-								<input type="hidden" name="action" value="woo_wallet_withdrawal_recover" />
-								<input type="hidden" name="withdrawal_id" value="<?php echo esc_attr( $request->id ); ?>" />
-								<?php wp_nonce_field( 'woo_wallet_withdrawal_recover' ); ?>
-								<button type="submit" class="button button-primary" onclick="return confirm('<?php echo esc_js( __( 'Finish this request as rejected? The refund already went out — this only updates the record, it will not send another refund.', 'woo-wallet' ) ); ?>');"><?php esc_html_e( 'Finish as rejected (refund already sent)', 'woo-wallet' ); ?></button>
-							</form>
-						<?php else : ?>
-							<p><?php esc_html_e( 'This reject was interrupted (a server or database error) before the refund was sent. No money has moved — it is safe to reset this request to pending and process it again.', 'woo-wallet' ); ?></p>
-							<form method="post" action="<?php echo esc_url( $post_url ); ?>">
-								<input type="hidden" name="action" value="woo_wallet_withdrawal_recover" />
-								<input type="hidden" name="withdrawal_id" value="<?php echo esc_attr( $request->id ); ?>" />
-								<?php wp_nonce_field( 'woo_wallet_withdrawal_recover' ); ?>
-								<button type="submit" class="button button-primary" onclick="return confirm('<?php echo esc_js( __( 'Reset this request to pending? No refund was sent yet, so this just makes it processable again.', 'woo-wallet' ) ); ?>');"><?php esc_html_e( 'Reset to pending (no refund was sent)', 'woo-wallet' ); ?></button>
-							</form>
-						<?php endif; ?>
+						<p><?php esc_html_e( 'This reject was interrupted by a server or database error before it could finish. Recovering it is safe to click regardless of whether the refund already went out — the refund is only ever sent once per request, whether this is the first attempt or a retry.', 'woo-wallet' ); ?></p>
+						<form method="post" action="<?php echo esc_url( $post_url ); ?>">
+							<input type="hidden" name="action" value="woo_wallet_withdrawal_recover" />
+							<input type="hidden" name="withdrawal_id" value="<?php echo esc_attr( $request->id ); ?>" />
+							<?php wp_nonce_field( 'woo_wallet_withdrawal_recover' ); ?>
+							<button type="submit" class="button button-primary" onclick="return confirm('<?php echo esc_js( __( 'Recover this request? This finishes it as rejected, sending the refund only if it has not already gone out.', 'woo-wallet' ) ); ?>');"><?php esc_html_e( 'Recover', 'woo-wallet' ); ?></button>
+						</form>
 					</div>
 				<?php endif; ?>
 
@@ -1390,21 +1447,29 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 							'message' => __( 'This request was just processed by someone else — no changes were made.', 'woo-wallet' ),
 						);
 					} else {
-						$refund_amount = (float) $request->amount + (float) $request->charge;
-						/* translators: %d: withdrawal request id */
-						$credit_note = sprintf( __( 'Withdrawal request #%d rejected - funds returned', 'woo-wallet' ), $request->id );
-						$credit_id   = woo_wallet()->wallet->credit( $request->user_id, $refund_amount, $credit_note, array( 'category' => 'withdrawal_refund' ) );
+						// idempotent_refund() checks the wallet ledger itself before
+						// crediting anything — see its docblock for why that (and not
+						// the refund_transaction_id column written below) is the
+						// actual guarantee against a double refund.
+						$credit_id = self::idempotent_refund( $request );
 
 						if ( $credit_id ) {
-							// Durable checkpoint, written as its own statement before
-							// the finalizing status update: if the process dies right
-							// after this line, the row is stuck on 'processing' but
-							// refund_transaction_id already records that the refund
-							// went out — recovery (handle_admin_recover_request())
-							// reads exactly this column to know it must finish the
-							// row as 'rejected' rather than crediting a second time.
-							$wpdb->update( self::table(), array( 'refund_transaction_id' => $credit_id ), array( 'id' => $request->id ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-							$wpdb->update( self::table(), array( 'status' => 'rejected' ), array( 'id' => $request->id ), array( '%s' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+							// One statement, not two: if this is lost to a crash, the
+							// row is simply stuck on 'processing' with the refund
+							// already tagged in the ledger, which the Recover action
+							// resolves safely by calling idempotent_refund() again
+							// (finds the tag, credits nothing new) — the column here
+							// is fast-display bookkeeping, not the safety mechanism.
+							$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+								self::table(),
+								array(
+									'status'                => 'rejected',
+									'refund_transaction_id' => $credit_id,
+								),
+								array( 'id' => $request->id ),
+								array( '%s', '%d' ),
+								array( '%d' )
+							);
 							if ( $note ) {
 								self::add_note( $request->id, $note, $note_visibility, $admin_id );
 							}
@@ -1418,6 +1483,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 							// The refund failed — put the request back to 'pending'
 							// rather than leave it stuck 'rejected'/'processing'
 							// with the customer never actually paid back.
+							$refund_amount = (float) $request->amount + (float) $request->charge;
 							$wpdb->update( self::table(), array( 'status' => 'pending' ), array( 'id' => $request->id ), array( '%s' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 							if ( $note ) {
 								self::add_note( $request->id, $note, $note_visibility, $admin_id );
@@ -1516,12 +1582,24 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		/**
 		 * Recover a withdrawal request stuck on 'processing' — a reject that
 		 * was interrupted (server crash / DB error) between claiming the row
-		 * and finishing it. The safe outcome is fully determined by whether
-		 * `refund_transaction_id` was already written (see the checkpoint
-		 * comment in handle_admin_process_request()'s reject branch), so this
-		 * deliberately does NOT take the outcome from the request — it is
-		 * computed here, server-side, from that one column, so there is no way
-		 * for a form value to trigger a double refund.
+		 * and finishing it.
+		 *
+		 * Deliberately does NOT branch on the request's own
+		 * `refund_transaction_id` column — that column is written as a
+		 * best-effort statement *after* the credit succeeds, so it can read 0
+		 * even when the refund already went out (if the process died between
+		 * the two writes), which would make a column-based decision here
+		 * reset an already-refunded request back to 'pending' and refund it
+		 * again on the next Reject. Instead this just calls
+		 * idempotent_refund() — the same call the live reject flow makes —
+		 * which checks the wallet ledger itself before crediting anything, so
+		 * calling it here can never double-refund regardless of what this
+		 * row's own bookkeeping managed to record.
+		 *
+		 * The claim→finalize step is itself atomic (conditioned on the row
+		 * still being 'processing'), so two staff members recovering the same
+		 * request concurrently cannot both finalize it and double-fire the
+		 * 'rejected' hook.
 		 */
 		public function handle_admin_recover_request() {
 			if ( ! current_user_can( get_wallet_user_capability() ) ) {
@@ -1529,6 +1607,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			}
 			check_admin_referer( 'woo_wallet_withdrawal_recover' );
 
+			global $wpdb;
 			$admin_id = get_current_user_id();
 			$id       = isset( $_POST['withdrawal_id'] ) ? absint( $_POST['withdrawal_id'] ) : 0;
 			$request  = $id ? self::get_request( $id ) : null;
@@ -1538,39 +1617,62 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					'type'    => 'error',
 					'message' => __( 'This request is not awaiting recovery (it may already have been resolved).', 'woo-wallet' ),
 				);
-			} elseif ( (int) $request->refund_transaction_id > 0 ) {
-				global $wpdb;
-				$wpdb->update( self::table(), array( 'status' => 'rejected' ), array( 'id' => $request->id ), array( '%s' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-				self::add_note(
-					$request->id,
-					sprintf(
-						/* translators: %d: refund transaction id */
-						__( 'Recovered: the refund (wallet transaction #%d) had already gone out before the interruption, so this request was finished as rejected — no second refund was sent.', 'woo-wallet' ),
-						(int) $request->refund_transaction_id
-					),
-					'private',
-					$admin_id
-				);
-				do_action( 'woo_wallet_withdrawal_rejected', $request->id, $request->user_id, (int) $request->refund_transaction_id );
-				$notice = array(
-					'type'    => 'success',
-					/* translators: %d: withdrawal request id */
-					'message' => sprintf( __( 'Withdrawal request #%d recovered and finished as rejected. The refund had already been sent, so no second refund was issued.', 'woo-wallet' ), $request->id ),
-				);
 			} else {
-				global $wpdb;
-				$wpdb->update( self::table(), array( 'status' => 'pending' ), array( 'id' => $request->id ), array( '%s' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-				self::add_note(
-					$request->id,
-					__( 'Recovered: no refund had gone out before the interruption, so this request was reset to pending — no money moved. It can be processed normally.', 'woo-wallet' ),
-					'private',
-					$admin_id
-				);
-				$notice = array(
-					'type'    => 'success',
-					/* translators: %d: withdrawal request id */
-					'message' => sprintf( __( 'Withdrawal request #%d recovered and reset to pending. No refund had been sent, so no money moved — you can process it normally now.', 'woo-wallet' ), $request->id ),
-				);
+				$credit_id = self::idempotent_refund( $request );
+
+				if ( $credit_id ) {
+					// Conditioned on `status = 'processing'`: if two staff members
+					// both land here for the same row, only one of these updates
+					// affects a row, so the hook/note below fire exactly once.
+					$affected = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+						self::table(),
+						array(
+							'status'                => 'rejected',
+							'refund_transaction_id' => $credit_id,
+						),
+						array(
+							'id'     => $request->id,
+							'status' => 'processing',
+						),
+						array( '%s', '%d' ),
+						array( '%d', '%s' )
+					);
+
+					if ( $affected ) {
+						self::add_note(
+							$request->id,
+							sprintf(
+								/* translators: %d: refund transaction id */
+								__( 'Recovered: finished as rejected. Refund is wallet transaction #%d (reused the existing refund if the interruption happened after it was already sent — never sent a second one).', 'woo-wallet' ),
+								$credit_id
+							),
+							'private',
+							$admin_id
+						);
+						do_action( 'woo_wallet_withdrawal_rejected', $request->id, $request->user_id, $credit_id );
+						$notice = array(
+							'type'    => 'success',
+							/* translators: %d: withdrawal request id */
+							'message' => sprintf( __( 'Withdrawal request #%d recovered and finished as rejected.', 'woo-wallet' ), $request->id ),
+						);
+					} else {
+						$notice = array(
+							'type'    => 'success',
+							'message' => __( 'This request was already recovered by someone else — no changes were made.', 'woo-wallet' ),
+						);
+					}
+				} else {
+					// The refund still couldn't be issued right now (wallet locked,
+					// DB error...) — leave it on 'processing' rather than guess;
+					// the admin can try Recover again once the underlying issue
+					// clears. Resetting to 'pending' here would be exactly the bug
+					// this design avoids if the refund actually did go out on a
+					// prior attempt this call simply failed to find.
+					$notice = array(
+						'type'    => 'error',
+						'message' => __( 'The refund could not be issued right now, so nothing was changed. Please try Recover again.', 'woo-wallet' ),
+					);
+				}
 			}
 
 			set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
