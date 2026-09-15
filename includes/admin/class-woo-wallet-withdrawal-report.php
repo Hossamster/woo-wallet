@@ -66,7 +66,7 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 	 */
 	private function current_status_filter() {
 		$status = isset( $_GET['withdrawal_status'] ) ? sanitize_key( wp_unslash( $_GET['withdrawal_status'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		return in_array( $status, array( 'pending', 'paid', 'rejected' ), true ) ? $status : '';
+		return in_array( $status, array( 'pending', 'processing', 'paid', 'rejected' ), true ) ? $status : '';
 	}
 
 	/**
@@ -130,11 +130,18 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 		if ( $primary !== $column_name ) {
 			return '';
 		}
+		if ( 'pending' === $item->status ) {
+			$label = __( 'Review', 'woo-wallet' );
+		} elseif ( 'processing' === $item->status ) {
+			$label = __( 'Recover', 'woo-wallet' );
+		} else {
+			$label = __( 'View', 'woo-wallet' );
+		}
 		$actions = array(
 			'view' => sprintf(
 				'<a href="%s">%s</a>',
 				esc_url( $this->detail_url( $item->id ) ),
-				'pending' === $item->status ? esc_html__( 'Review', 'woo-wallet' ) : esc_html__( 'View', 'woo-wallet' )
+				esc_html( $label )
 			),
 		);
 		return $this->row_actions( $actions );
@@ -231,6 +238,7 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 				<select name="withdrawal_status">
 					<option value=""><?php esc_html_e( 'All statuses', 'woo-wallet' ); ?></option>
 					<option value="pending" <?php selected( $status, 'pending' ); ?>><?php esc_html_e( 'Pending', 'woo-wallet' ); ?></option>
+					<option value="processing" <?php selected( $status, 'processing' ); ?>><?php esc_html_e( 'Processing (needs recovery)', 'woo-wallet' ); ?></option>
 					<option value="paid" <?php selected( $status, 'paid' ); ?>><?php esc_html_e( 'Paid', 'woo-wallet' ); ?></option>
 					<option value="rejected" <?php selected( $status, 'rejected' ); ?>><?php esc_html_e( 'Rejected', 'woo-wallet' ); ?></option>
 				</select>

@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.2
+Stable tag: 1.7.3
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -116,6 +116,9 @@ Yes, once enabled under Axfit Wallet → Settings → Withdrawal. Customers subm
 
 == Changelog ==
 
+= v1.7.3 =
+* Fix - Concurrency and money-safety hardening on withdrawal processing: two staff members can no longer both process the same request (mark-paid/reject is now conditioned on an atomic status change, not a plain read-then-write); a database error while recording a new request now credits the reservation straight back instead of leaving it dangling; a failed receipt upload now aborts the action instead of being silently ignored; and a reject interrupted mid-refund (server crash / DB error between the refund and finalizing the record) no longer risks a double refund on recovery — it lands on a 'processing' status with the refund transaction id already recorded, and Axfit Wallet → Withdrawals surfaces a recovery action that reads that column to safely finish or reset it.
+
 = v1.7.2 =
 * New - Store-wide Transactions screen (Axfit Wallet → Transactions, now visible in the sidebar): every credit/debit across every customer, filterable by customer, category and date range — no need to open a customer's own statement to see who transferred to whom.
 * New - Admin can log a withdrawal manually on a customer's behalf (Axfit Wallet → Withdrawals → Create Withdrawal) for phone/offline requests; the record is attributed to the staff member who created it and, separately, to whoever marks it paid or rejects it.
@@ -125,6 +128,9 @@ Yes, once enabled under Axfit Wallet → Settings → Withdrawal. Customers subm
 * New - Wallet withdrawal requests: customers can ask for part of their wallet balance to be paid out to a bank account (bank dropdown, beneficiary name, account number, optional IBAN) from a new "Withdraw" tab on the wallet dashboard. Requested funds are reserved from the wallet immediately; admins review, approve or reject requests under Axfit Wallet → Withdrawals. Configure minimum/maximum amounts, an optional charge, and the bank list under Axfit Wallet → Settings → Withdrawal.
 
 == Upgrade Notice ==
+
+= 1.7.3 =
+Important money-safety fixes for withdrawal processing — recommended for anyone running 1.7.1/1.7.2 with withdrawals enabled. See the changelog for details.
 
 = 1.7.2 =
 Adds a store-wide Transactions screen, manual/staff-attributed withdrawal creation, and receipt/reference/notes on withdrawal requests.

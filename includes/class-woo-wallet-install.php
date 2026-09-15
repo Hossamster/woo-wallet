@@ -61,6 +61,9 @@ class Woo_Wallet_Install {
 		'1.7.2'  => array(
 			'woo_wallet_update_172_db_schema',
 		),
+		'1.7.3'  => array(
+			'woo_wallet_update_173_db_schema',
+		),
 	);
 	/**
 	 * Plugin install
@@ -197,6 +200,17 @@ class Woo_Wallet_Install {
 	 * 'paid' once the bank transfer is made manually, or to 'rejected', which
 	 * credits the reserved amount back to the wallet.
 	 *
+	 * Rejecting is two writes (refund, then status), not one, so `status`
+	 * passes through a transient 'processing' value while a reject is in
+	 * flight and `refund_transaction_id` is written the instant the refund
+	 * itself succeeds — *before* the row is finalized to 'rejected'. If the
+	 * request dies between those two writes, a row stuck on 'processing' can
+	 * still be resolved correctly from that one column: refund_transaction_id
+	 * set means the refund already went out (finish as 'rejected', do not
+	 * credit again); unset means it never did (safe to reset to 'pending').
+	 * See Woo_Wallet_Withdrawal::handle_admin_process_request() and
+	 * ::handle_admin_recover_request().
+	 *
 	 * Kept as a separate method so the 1.7.1 upgrade migration can create the
 	 * table on existing installs without re-running the full schema.
 	 *
@@ -224,6 +238,7 @@ class Woo_Wallet_Install {
             iban varchar(64 ) NULL,
             reference_no varchar(191 ) NOT NULL DEFAULT '',
             receipt_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            refund_transaction_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
             status varchar(20 ) NOT NULL DEFAULT 'pending',
             admin_note text NULL,
             created_by BIGINT UNSIGNED NOT NULL DEFAULT 0,

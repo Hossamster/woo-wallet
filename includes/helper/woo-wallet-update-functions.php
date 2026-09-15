@@ -440,3 +440,16 @@ function woo_wallet_update_172_db_schema() {
 	dbDelta( Woo_Wallet_Install::get_withdrawals_schema() );
 	dbDelta( Woo_Wallet_Install::get_withdrawal_notes_schema() );
 }
+
+/**
+ * 1.7.3: add `refund_transaction_id` to `woo_wallet_withdrawals` — the
+ * durable checkpoint that lets a withdrawal request stuck on the transient
+ * 'processing' status (interrupted mid-reject) be recovered safely, without
+ * risking a double refund. See the schema docblock in Woo_Wallet_Install.
+ *
+ * @return void
+ */
+function woo_wallet_update_173_db_schema() {
+	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+	dbDelta( Woo_Wallet_Install::get_withdrawals_schema() );
+}
