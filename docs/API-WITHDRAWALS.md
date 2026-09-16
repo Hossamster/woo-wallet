@@ -137,6 +137,7 @@ from the wallet immediately.
 | `bank_name` | string | yes | Must match an entry from `settings/public`'s `withdrawal.banks` |
 | `beneficiary_name` | string | yes | |
 | `account_number` | string | yes | |
+| `phone` | string | yes | Contact number in case staff need to reach the customer about this request; at least 8 digits |
 | `iban` | string | no | Egyptian IBAN: `EG` + 27 digits |
 
 ```bash
@@ -150,6 +151,7 @@ curl -X POST 'https://example.com/wp-json/terawallet/v1/me/withdrawals' \
     "bank_name": "National Bank of Egypt (البنك الأهلي المصري)",
     "beneficiary_name": "Mohamed Ali",
     "account_number": "1234567890",
+    "phone": "01012345678",
     "iban": "EG380019000500000000263180002"
   }'
 ```
@@ -176,6 +178,7 @@ of another user's request id is not disclosed).
   "bank_name": "National Bank of Egypt (البنك الأهلي المصري)",
   "beneficiary_name": "Mohamed Ali",
   "account_number": "1234567890",
+  "phone": "01012345678",
   "iban": "EG380019000500000000263180002",
   "reference_no": "TRX-99213",
   "receipt_url": "https://example.com/wp-content/uploads/2026/09/receipt.pdf",
@@ -191,7 +194,7 @@ of another user's request id is not disclosed).
 ```
 
 Only **public** notes appear here — private staff notes never leave the
-admin namespace. `reference_no`, `account_number` and `iban` are the
+admin namespace. `reference_no`, `account_number`, `phone` and `iban` are the
 customer's own submitted data, echoed back.
 
 `receipt_url` is `null` until an admin attaches one (see
@@ -243,6 +246,7 @@ type, not file extension).
 | `bank_name` | string | yes | Free text — not constrained to the customer dropdown |
 | `beneficiary_name` | string | yes | |
 | `account_number` | string | yes | |
+| `phone` | string | yes | Contact number in case staff need to reach the customer about this request; at least 8 digits |
 | `iban` | string | no | |
 | `reference_no` | string | no | Bank transfer reference |
 | `status` | `pending` \| `paid` | no, default `pending` | Use `paid` when the transfer was already sent (e.g. logging a completed phone request) |
@@ -329,6 +333,7 @@ Returns the updated [admin withdrawal object](#admin-withdrawal-object).
   "bank_name": "National Bank of Egypt (البنك الأهلي المصري)",
   "beneficiary_name": "Mohamed Ali",
   "account_number": "1234567890",
+  "phone": "01012345678",
   "iban": "EG380019000500000000263180002",
   "reference_no": "TRX-99213",
   "receipt_id": 1391,

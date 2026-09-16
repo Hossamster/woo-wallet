@@ -259,6 +259,9 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 				$lines[] = '<strong>' . esc_html( $item->bank_name ) . '</strong>';
 				$lines[] = esc_html( $item->beneficiary_name );
 				$lines[] = esc_html( $item->account_number );
+				if ( ! empty( $item->phone ) ) {
+					$lines[] = 'Tel: ' . esc_html( $item->phone );
+				}
 				if ( ! empty( $item->iban ) ) {
 					$lines[] = 'IBAN: ' . esc_html( $item->iban );
 				}

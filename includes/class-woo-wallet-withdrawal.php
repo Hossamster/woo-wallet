@@ -390,9 +390,10 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			$bank_name        = isset( $_POST['woo_wallet_withdraw_bank'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_bank'] ) ) : '';
 			$beneficiary_name = isset( $_POST['woo_wallet_withdraw_beneficiary'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_beneficiary'] ) ) : '';
 			$account_number   = isset( $_POST['woo_wallet_withdraw_account_number'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_account_number'] ) ) : '';
+			$phone            = isset( $_POST['woo_wallet_withdraw_phone'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_phone'] ) ) : '';
 			$iban             = isset( $_POST['woo_wallet_withdraw_iban'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_iban'] ) ) : '';
 
-			return self::submit_request( get_current_user_id(), $amount, $bank_name, $beneficiary_name, $account_number, $iban );
+			return self::submit_request( get_current_user_id(), $amount, $bank_name, $beneficiary_name, $account_number, $phone, $iban );
 		}
 
 		/**
@@ -407,10 +408,11 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @param string $bank_name        Must match one of get_configured_banks().
 		 * @param string $beneficiary_name Beneficiary name.
 		 * @param string $account_number   Bank account number.
+		 * @param string $phone            Contact phone number, so staff can reach the customer about this request.
 		 * @param string $iban             Optional IBAN.
 		 * @return array {is_valid, message, id?, charge?}
 		 */
-		public static function submit_request( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $iban = '' ) {
+		public static function submit_request( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, $iban = '' ) {
 			if ( ! self::is_enabled_static() ) {
 				return array(
 					'is_valid' => false,
@@ -488,6 +490,14 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
+			$phone = preg_replace( '/[^0-9+]/', '', (string) $phone );
+			if ( strlen( $phone ) < 8 ) {
+				return array(
+					'is_valid' => false,
+					'message'  => __( 'Please enter a valid contact phone number.', 'woo-wallet' ),
+				);
+			}
+
 			$iban = strtoupper( preg_replace( '/\s+/', '', (string) $iban ) );
 			if ( '' !== $iban && ! apply_filters( 'woo_wallet_is_valid_egyptian_iban', (bool) preg_match( '/^EG\d{27}$/', $iban ), $iban ) ) {
 				return array(
@@ -496,7 +506,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
-			$result = self::reserve_and_insert( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $iban, $user_id, 'pending', '' );
+			$result = self::reserve_and_insert( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, $iban, $user_id, 'pending', '' );
 			if ( ! $result['is_valid'] ) {
 				return $result;
 			}
@@ -532,13 +542,14 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @param string $bank_name        Bank name.
 		 * @param string $beneficiary_name Beneficiary name.
 		 * @param string $account_number   Bank account number.
+		 * @param string $phone            Contact phone number.
 		 * @param string $iban             Optional IBAN.
 		 * @param int    $created_by       User id who created the request (customer themself, or the staff member logging it).
 		 * @param string $status           Initial status: 'pending' or 'paid'.
 		 * @param string $reference_no     Optional bank transfer reference number.
 		 * @return array {is_valid, message, id, charge}
 		 */
-		private static function reserve_and_insert( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $iban, $created_by, $status = 'pending', $reference_no = '' ) {
+		private static function reserve_and_insert( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, $iban, $created_by, $status = 'pending', $reference_no = '' ) {
 			$charge_type   = woo_wallet()->settings_api->get_option( 'withdrawal_charge_type', '_wallet_settings_withdrawal', 'fixed' );
 			$charge_amount = (float) woo_wallet()->settings_api->get_option( 'withdrawal_charge_amount', '_wallet_settings_withdrawal', 0 );
 			$charge        = 'percent' === $charge_type ? ( $amount * $charge_amount ) / 100 : $charge_amount;
@@ -575,6 +586,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				'bank_name'        => $bank_name,
 				'beneficiary_name' => $beneficiary_name,
 				'account_number'   => $account_number,
+				'phone'            => $phone,
 				'iban'             => $iban,
 				'reference_no'     => $reference_no,
 				'status'           => $status,
@@ -646,6 +658,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				'bank_name'        => (string) $data['bank_name'],
 				'beneficiary_name' => (string) $data['beneficiary_name'],
 				'account_number'   => (string) $data['account_number'],
+				'phone'            => isset( $data['phone'] ) ? (string) $data['phone'] : '',
 				'iban'             => (string) $data['iban'],
 				'reference_no'     => isset( $data['reference_no'] ) ? (string) $data['reference_no'] : '',
 				'receipt_id'       => isset( $data['receipt_id'] ) ? (int) $data['receipt_id'] : 0,
@@ -654,7 +667,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				'processed_by'     => isset( $data['processed_by'] ) ? (int) $data['processed_by'] : 0,
 				'date_created'     => current_time( 'mysql' ),
 			);
-			$formats = array( '%d', '%d', '%f', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d', '%d', '%s' );
+			$formats = array( '%d', '%d', '%f', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d', '%d', '%s' );
 			if ( 'paid' === $row['status'] ) {
 				$row['date_updated'] = current_time( 'mysql' );
 				$formats[]           = '%s';
@@ -1139,6 +1152,10 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 							<td><input type="text" id="ww-account" name="account_number" class="regular-text" required /></td>
 						</tr>
 						<tr>
+							<th><label for="ww-phone"><?php esc_html_e( 'Contact Phone Number', 'woo-wallet' ); ?></label></th>
+							<td><input type="tel" id="ww-phone" name="phone" class="regular-text" required /></td>
+						</tr>
+						<tr>
 							<th><label for="ww-iban"><?php esc_html_e( 'IBAN (optional)', 'woo-wallet' ); ?></label></th>
 							<td><input type="text" id="ww-iban" name="iban" class="regular-text" /></td>
 						</tr>
@@ -1232,6 +1249,10 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 								<br />IBAN: <?php echo esc_html( $request->iban ); ?>
 							<?php endif; ?>
 						</td>
+					</tr>
+					<tr>
+						<th><?php esc_html_e( 'Contact Phone', 'woo-wallet' ); ?></th>
+						<td><?php echo $request->phone ? esc_html( $request->phone ) : '&ndash;'; ?></td>
 					</tr>
 					<tr>
 						<th><?php esc_html_e( 'Reference No.', 'woo-wallet' ); ?></th>
@@ -1408,6 +1429,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			}
 			$beneficiary     = isset( $_POST['beneficiary_name'] ) ? sanitize_text_field( wp_unslash( $_POST['beneficiary_name'] ) ) : '';
 			$account_number  = isset( $_POST['account_number'] ) ? preg_replace( '/\s+/', '', sanitize_text_field( wp_unslash( $_POST['account_number'] ) ) ) : '';
+			$phone           = isset( $_POST['phone'] ) ? preg_replace( '/[^0-9+]/', '', sanitize_text_field( wp_unslash( $_POST['phone'] ) ) ) : '';
 			$iban            = isset( $_POST['iban'] ) ? strtoupper( preg_replace( '/\s+/', '', sanitize_text_field( wp_unslash( $_POST['iban'] ) ) ) ) : '';
 			$reference_no    = isset( $_POST['reference_no'] ) ? sanitize_text_field( wp_unslash( $_POST['reference_no'] ) ) : '';
 			$status          = isset( $_POST['status'] ) && 'paid' === $_POST['status'] ? 'paid' : 'pending';
@@ -1417,12 +1439,12 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			// Cheap pre-check purely to decide whether it's worth uploading the
 			// receipt at all — admin_create() re-validates authoritatively below
 			// regardless, this just avoids wasting an upload on a doomed submission.
-			$looks_valid = $target_user_id && $amount > 0 && '' !== $bank_name && '' !== $beneficiary && '' !== $account_number;
+			$looks_valid = $target_user_id && $amount > 0 && '' !== $bank_name && '' !== $beneficiary && '' !== $account_number && strlen( $phone ) >= 8;
 
 			if ( ! $looks_valid ) {
 				$notice = array(
 					'type'    => 'error',
-					'message' => __( 'Please select a customer and fill in the amount, bank, beneficiary name and account number.', 'woo-wallet' ),
+					'message' => __( 'Please select a customer and fill in the amount, bank, beneficiary name, account number and a valid contact phone number.', 'woo-wallet' ),
 				);
 				set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
 				wp_safe_redirect( admin_url( 'admin.php?page=woo-wallet-withdrawals&action=new' ) );
@@ -1444,7 +1466,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				exit();
 			}
 
-			$result = self::admin_create( $target_user_id, $amount, $bank_name, $beneficiary, $account_number, $iban, $admin_id, $status, $reference_no, $receipt['id'], $note, $note_visibility );
+			$result = self::admin_create( $target_user_id, $amount, $bank_name, $beneficiary, $account_number, $phone, $iban, $admin_id, $status, $reference_no, $receipt['id'], $note, $note_visibility );
 
 			if ( ! $result['is_valid'] ) {
 				// This upload was created fresh for this one submission (unlike a
@@ -1499,6 +1521,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @param string $bank_name        Free-text bank name.
 		 * @param string $beneficiary_name Beneficiary name.
 		 * @param string $account_number   Bank account number.
+		 * @param string $phone            Contact phone number.
 		 * @param string $iban             Optional IBAN.
 		 * @param int    $admin_id         Staff member creating the request.
 		 * @param string $status           'pending' or 'paid'.
@@ -1508,13 +1531,14 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @param string $note_visibility  'public' or 'private'.
 		 * @return array {is_valid, message, id?}
 		 */
-		public static function admin_create( $target_user_id, $amount, $bank_name, $beneficiary_name, $account_number, $iban, $admin_id, $status, $reference_no = '', $receipt_id = 0, $note = '', $note_visibility = 'private' ) {
+		public static function admin_create( $target_user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, $iban, $admin_id, $status, $reference_no = '', $receipt_id = 0, $note = '', $note_visibility = 'private' ) {
 			$target_user_id   = (int) $target_user_id;
 			$customer         = $target_user_id ? get_userdata( $target_user_id ) : false;
 			$amount           = (float) $amount;
 			$bank_name        = trim( (string) $bank_name );
 			$beneficiary_name = trim( (string) $beneficiary_name );
 			$account_number   = preg_replace( '/\s+/', '', (string) $account_number );
+			$phone            = preg_replace( '/[^0-9+]/', '', (string) $phone );
 			$status           = 'paid' === $status ? 'paid' : 'pending';
 
 			if ( ! $customer ) {
@@ -1535,8 +1559,14 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					'message'  => __( 'Bank, beneficiary name and account number are required.', 'woo-wallet' ),
 				);
 			}
+			if ( strlen( $phone ) < 8 ) {
+				return array(
+					'is_valid' => false,
+					'message'  => __( 'Please enter a valid contact phone number.', 'woo-wallet' ),
+				);
+			}
 
-			$result = self::reserve_and_insert( $target_user_id, $amount, $bank_name, $beneficiary_name, $account_number, (string) $iban, (int) $admin_id, $status, (string) $reference_no );
+			$result = self::reserve_and_insert( $target_user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, (string) $iban, (int) $admin_id, $status, (string) $reference_no );
 			if ( ! $result['is_valid'] ) {
 				return $result;
 			}

@@ -64,6 +64,9 @@ class Woo_Wallet_Install {
 		'1.7.3'  => array(
 			'woo_wallet_update_173_db_schema',
 		),
+		'1.7.7'  => array(
+			'woo_wallet_update_177_db_schema',
+		),
 	);
 	/**
 	 * Plugin install
@@ -236,6 +239,7 @@ class Woo_Wallet_Install {
             beneficiary_name varchar(191 ) NOT NULL DEFAULT '',
             account_number varchar(191 ) NOT NULL DEFAULT '',
             iban varchar(64 ) NULL,
+            phone varchar(32 ) NOT NULL DEFAULT '',
             reference_no varchar(191 ) NOT NULL DEFAULT '',
             receipt_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
             refund_transaction_id BIGINT UNSIGNED NOT NULL DEFAULT 0,

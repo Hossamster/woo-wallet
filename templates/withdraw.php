@@ -72,6 +72,10 @@ $ww_retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
 			<input id="woo_wallet_withdraw_account_number" type="text" name="woo_wallet_withdraw_account_number" required placeholder="<?php esc_attr_e( 'Bank account number', 'woo-wallet' ); ?>" />
 		</p>
 		<p class="woo-wallet-field-container form-row form-row-wide">
+			<label for="woo_wallet_withdraw_phone"><?php esc_html_e( 'Contact Phone Number', 'woo-wallet' ); ?></label>
+			<input id="woo_wallet_withdraw_phone" type="tel" name="woo_wallet_withdraw_phone" required placeholder="<?php esc_attr_e( 'e.g. 01xxxxxxxxx', 'woo-wallet' ); ?>" />
+		</p>
+		<p class="woo-wallet-field-container form-row form-row-wide">
 			<label for="woo_wallet_withdraw_iban"><?php esc_html_e( 'IBAN (optional)', 'woo-wallet' ); ?></label>
 			<input id="woo_wallet_withdraw_iban" type="text" name="woo_wallet_withdraw_iban" placeholder="EG..." />
 		</p>
@@ -95,6 +99,7 @@ $ww_retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
 					<th scope="col"><?php esc_html_e( 'Bank', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Beneficiary Name', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Account Number', 'woo-wallet' ); ?></th>
+					<th scope="col"><?php esc_html_e( 'Phone', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'IBAN', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Reference', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Receipt', 'woo-wallet' ); ?></th>
@@ -113,6 +118,7 @@ $ww_retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
 						<td data-label="<?php esc_attr_e( 'Bank', 'woo-wallet' ); ?>"><?php echo esc_html( $ww_row->bank_name ); ?></td>
 						<td data-label="<?php esc_attr_e( 'Beneficiary Name', 'woo-wallet' ); ?>"><?php echo esc_html( $ww_row->beneficiary_name ); ?></td>
 						<td data-label="<?php esc_attr_e( 'Account Number', 'woo-wallet' ); ?>"><?php echo esc_html( $ww_row->account_number ); ?></td>
+						<td data-label="<?php esc_attr_e( 'Phone', 'woo-wallet' ); ?>"><?php echo esc_html( $ww_row->phone ); ?></td>
 						<td data-label="<?php esc_attr_e( 'IBAN', 'woo-wallet' ); ?>"><?php echo $ww_row->iban ? esc_html( $ww_row->iban ) : '&ndash;'; ?></td>
 						<td data-label="<?php esc_attr_e( 'Reference', 'woo-wallet' ); ?>"><?php echo $ww_row->reference_no ? esc_html( $ww_row->reference_no ) : '&ndash;'; ?></td>
 						<td data-label="<?php esc_attr_e( 'Receipt', 'woo-wallet' ); ?>">

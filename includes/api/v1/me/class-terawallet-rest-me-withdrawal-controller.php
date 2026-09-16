@@ -93,6 +93,13 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 								'sanitize_callback' => 'sanitize_text_field',
 								'validate_callback' => 'rest_validate_request_arg',
 							),
+							'phone'            => array(
+								'required'          => true,
+								'type'              => 'string',
+								'description'       => __( 'Contact phone number, in case staff need to reach the customer about this request.', 'woo-wallet' ),
+								'sanitize_callback' => 'sanitize_text_field',
+								'validate_callback' => 'rest_validate_request_arg',
+							),
 							'iban'             => array(
 								'type'              => 'string',
 								'description'       => __( 'Optional. Egyptian IBAN: EG followed by 27 digits.', 'woo-wallet' ),
@@ -205,6 +212,7 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 						(string) $request->get_param( 'bank_name' ),
 						(string) $request->get_param( 'beneficiary_name' ),
 						(string) $request->get_param( 'account_number' ),
+						(string) $request->get_param( 'phone' ),
 						(string) $request->get_param( 'iban' )
 					);
 
@@ -261,6 +269,7 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 				'bank_name'           => $row->bank_name,
 				'beneficiary_name'    => $row->beneficiary_name,
 				'account_number'      => $row->account_number,
+				'phone'               => $row->phone,
 				'iban'                => $row->iban ? $row->iban : null,
 				'reference_no'        => $row->reference_no ? $row->reference_no : null,
 				'receipt_url'         => $receipt_url ? $receipt_url : null,
@@ -303,6 +312,7 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 					'bank_name'        => array( 'type' => 'string', 'context' => array( 'view' ) ),
 					'beneficiary_name' => array( 'type' => 'string', 'context' => array( 'view' ) ),
 					'account_number'   => array( 'type' => 'string', 'context' => array( 'view' ) ),
+					'phone'            => array( 'type' => 'string', 'context' => array( 'view' ) ),
 					'iban'             => array( 'type' => array( 'string', 'null' ), 'context' => array( 'view' ) ),
 					'reference_no'     => array( 'type' => array( 'string', 'null' ), 'context' => array( 'view' ), 'readonly' => true ),
 					'receipt_url'        => array( 'type' => array( 'string', 'null' ), 'format' => 'uri', 'context' => array( 'view' ), 'readonly' => true ),

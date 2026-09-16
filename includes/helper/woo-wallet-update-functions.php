@@ -453,3 +453,14 @@ function woo_wallet_update_173_db_schema() {
 	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 	dbDelta( Woo_Wallet_Install::get_withdrawals_schema() );
 }
+
+/**
+ * 1.7.7: add `phone` to `woo_wallet_withdrawals` — a contact number captured
+ * with each withdrawal request so staff can reach the customer about it.
+ *
+ * @return void
+ */
+function woo_wallet_update_177_db_schema() {
+	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+	dbDelta( Woo_Wallet_Install::get_withdrawals_schema() );
+}
