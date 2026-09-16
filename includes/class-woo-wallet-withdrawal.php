@@ -79,6 +79,13 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 	class Woo_Wallet_Withdrawal {
 
 		/**
+		 * WP-Cron hook name for the receipt-retention sweep.
+		 *
+		 * @var string
+		 */
+		const RECEIPT_CLEANUP_HOOK = 'woo_wallet_withdrawal_cleanup_receipts_cron';
+
+		/**
 		 * DB table name (no prefix helper needed elsewhere — kept private to this class).
 		 *
 		 * @return string
@@ -113,6 +120,13 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			add_filter( 'woo_wallet_is_enable_withdraw', array( $this, 'is_withdraw_enabled' ) );
 			add_action( 'woo_wallet_withdraw_content', array( $this, 'render_withdraw_content' ) );
 			add_action( 'wp_loaded', array( $this, 'maybe_handle_withdraw_request' ) );
+
+			// Receipt retention: scheduled independently of admin/frontend context,
+			// since WP-Cron's actual trigger is a pageload on the public site just
+			// as often as it is one in wp-admin.
+			add_action( 'init', array( $this, 'maybe_schedule_receipt_cleanup' ) );
+			add_action( self::RECEIPT_CLEANUP_HOOK, array( $this, 'cleanup_old_receipts' ) );
+			add_action( 'woo_wallet_deactivated', array( $this, 'unschedule_receipt_cleanup' ) );
 
 			if ( is_admin() ) {
 				add_action( 'admin_menu', array( $this, 'admin_menu' ), 70 );
@@ -893,6 +907,90 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
+		 * How long an uploaded receipt is kept before the cleanup sweep removes
+		 * it, in days. Filterable; a value of 0 (or less) disables the sweep
+		 * entirely, since a scheduled event that never has anything to do is
+		 * harmless, but might as well not run.
+		 *
+		 * @return int
+		 */
+		public static function receipt_retention_days() {
+			return (int) apply_filters( 'woo_wallet_withdrawal_receipt_retention_days', 90 );
+		}
+
+		/**
+		 * Schedule the daily receipt-retention sweep if it isn't already
+		 * scheduled. Runs on `init` rather than only on plugin activation, so
+		 * an in-place code update (no re-activation) still gets it scheduled.
+		 */
+		public function maybe_schedule_receipt_cleanup() {
+			if ( ! wp_next_scheduled( self::RECEIPT_CLEANUP_HOOK ) ) {
+				wp_schedule_event( time(), 'daily', self::RECEIPT_CLEANUP_HOOK );
+			}
+		}
+
+		/**
+		 * Unschedule the sweep on plugin deactivation (hooked to
+		 * `woo_wallet_deactivated`, fired from Woo_Wallet::deactivate_plugin()).
+		 */
+		public function unschedule_receipt_cleanup() {
+			$timestamp = wp_next_scheduled( self::RECEIPT_CLEANUP_HOOK );
+			if ( $timestamp ) {
+				wp_unschedule_event( $timestamp, self::RECEIPT_CLEANUP_HOOK );
+			}
+		}
+
+		/**
+		 * Remove receipts older than receipt_retention_days() — both the Media
+		 * Library attachment and the row's reference to it, so the customer's
+		 * and admin's UI stop showing a link to a file that's been deleted, and
+		 * uploaded proof-of-payment doesn't sit in the server's storage forever.
+		 * Leaves a private note on each affected request so an admin reviewing
+		 * it later understands why `receipt_id` is empty rather than assuming
+		 * one was never attached.
+		 *
+		 * The request row itself (amount, bank details, status, reference
+		 * number, notes) is never touched — only the uploaded file and the
+		 * column pointing at it.
+		 */
+		public function cleanup_old_receipts() {
+			$retention_days = self::receipt_retention_days();
+			if ( $retention_days <= 0 ) {
+				return;
+			}
+
+			global $wpdb;
+			// current_time('timestamp') is already site-local; gmdate() here
+			// (not date()) avoids double-applying the server's own timezone
+			// offset on top of it — matches how date_created itself is written
+			// (current_time('mysql')) elsewhere in this class.
+			$cutoff = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $retention_days * DAY_IN_SECONDS ) );
+
+			$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
+				$wpdb->prepare(
+					'SELECT id, receipt_id FROM ' . self::table() . ' WHERE receipt_id > 0 AND date_created < %s', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					$cutoff
+				)
+			);
+
+			foreach ( $rows as $row ) {
+				wp_delete_attachment( (int) $row->receipt_id, true );
+				$wpdb->update( self::table(), array( 'receipt_id' => 0 ), array( 'id' => $row->id ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+				self::add_note(
+					$row->id,
+					sprintf(
+						/* translators: %d: retention period in days */
+						__( 'Receipt automatically removed after the %d-day retention period.', 'woo-wallet' ),
+						$retention_days
+					),
+					'private',
+					0
+				);
+				do_action( 'woo_wallet_withdrawal_receipt_expired', $row->id );
+			}
+		}
+
+		/**
 		 * Add the "Withdrawals" submenu under the Axfit Wallet admin menu.
 		 */
 		public function admin_menu() {
@@ -1091,6 +1189,18 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 						<td>
 							<?php if ( $request->receipt_id && wp_get_attachment_url( $request->receipt_id ) ) : ?>
 								<a href="<?php echo esc_url( wp_get_attachment_url( $request->receipt_id ) ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'View receipt', 'woo-wallet' ); ?></a>
+								<?php $ww_retention_days = self::receipt_retention_days(); ?>
+								<?php if ( $ww_retention_days > 0 ) : ?>
+									<p class="description">
+										<?php
+										printf(
+											/* translators: %d: retention period in days */
+											esc_html__( 'Automatically removed %d days after the request date.', 'woo-wallet' ),
+											(int) $ww_retention_days
+										);
+										?>
+									</p>
+								<?php endif; ?>
 							<?php else : ?>
 								&ndash;
 							<?php endif; ?>

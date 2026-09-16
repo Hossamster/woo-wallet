@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.4
+Stable tag: 1.7.5
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,11 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.5 =
+* New - Uploaded withdrawal receipts are now shown to the customer too (a "Receipt" column on the "Your Withdrawal Requests" table, with a link) — previously only visible to admins.
+* New - Receipts are automatically deleted 90 days after the request date (filterable via `woo_wallet_withdrawal_receipt_retention_days`) via a daily housekeeping sweep, to keep the Media Library from growing forever with proof-of-payment files. A note on both the customer's history table and the admin's request detail page explains this, and the REST API exposes a `receipt_expires_at` field so integrations can warn customers before the link goes stale.
+* Fix - `uninstall.php` was missing the `woo_wallet_withdrawals` / `woo_wallet_withdrawal_notes` tables from its full-removal cleanup (`WALLET_REMOVE_ALL_DATA`) — added.
 
 = v1.7.4 =
 * New - REST API for wallet withdrawals. Customers: `GET/POST terawallet/v1/me/withdrawals`, `GET terawallet/v1/me/withdrawals/{id}` (own requests only, cookie auth). Admins: `GET/POST terawallet/v1/admin/withdrawals`, `GET .../{id}`, `POST .../{id}/process`, `POST .../{id}/recover`, `POST .../{id}/notes` — the same concurrency-safe, idempotent-refund logic the admin screens use, so there is one implementation regardless of which surface calls it. `GET terawallet/v1/settings/public` now also reports withdrawal limits, charge and the configured bank list.

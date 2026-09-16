@@ -240,21 +240,36 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 				);
 			}
 
+			// Receipts are removed by a retention sweep (default 90 days after
+			// the request date) — `receipt_expires_at` lets a client warn the
+			// customer before the link goes stale, without hardcoding the
+			// retention window (it's admin-configurable).
+			$receipt_url        = $row->receipt_id ? wp_get_attachment_url( $row->receipt_id ) : false;
+			$receipt_expires_at = null;
+			if ( $receipt_url ) {
+				$retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
+				if ( $retention_days > 0 ) {
+					$receipt_expires_at = mysql_to_rfc3339( gmdate( 'Y-m-d H:i:s', strtotime( $row->date_created ) + ( $retention_days * DAY_IN_SECONDS ) ) );
+				}
+			}
+
 			$data = array(
-				'id'               => (int) $row->id,
-				'amount'           => (float) $row->amount,
-				'charge'           => (float) $row->charge,
-				'currency'         => $currency,
-				'bank_name'        => $row->bank_name,
-				'beneficiary_name' => $row->beneficiary_name,
-				'account_number'   => $row->account_number,
-				'iban'             => $row->iban ? $row->iban : null,
-				'reference_no'     => $row->reference_no ? $row->reference_no : null,
-				'status'           => 'processing' === $row->status ? 'pending' : $row->status, // internal transient state reads as 'pending' to customers.
-				'notes'            => $notes,
-				'date_created'     => mysql_to_rfc3339( $row->date_created ),
-				'date_updated'     => $row->date_updated ? mysql_to_rfc3339( $row->date_updated ) : null,
-				'formatted'        => array(
+				'id'                  => (int) $row->id,
+				'amount'              => (float) $row->amount,
+				'charge'              => (float) $row->charge,
+				'currency'            => $currency,
+				'bank_name'           => $row->bank_name,
+				'beneficiary_name'    => $row->beneficiary_name,
+				'account_number'      => $row->account_number,
+				'iban'                => $row->iban ? $row->iban : null,
+				'reference_no'        => $row->reference_no ? $row->reference_no : null,
+				'receipt_url'         => $receipt_url ? $receipt_url : null,
+				'receipt_expires_at'  => $receipt_expires_at,
+				'status'              => 'processing' === $row->status ? 'pending' : $row->status, // internal transient state reads as 'pending' to customers.
+				'notes'               => $notes,
+				'date_created'        => mysql_to_rfc3339( $row->date_created ),
+				'date_updated'        => $row->date_updated ? mysql_to_rfc3339( $row->date_updated ) : null,
+				'formatted'           => array(
 					'amount' => wp_strip_all_tags( wc_price( (float) $row->amount, $price_args ) ),
 					'charge' => (float) $row->charge > 0 ? wp_strip_all_tags( wc_price( (float) $row->charge, $price_args ) ) : null,
 				),
@@ -290,6 +305,8 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 					'account_number'   => array( 'type' => 'string', 'context' => array( 'view' ) ),
 					'iban'             => array( 'type' => array( 'string', 'null' ), 'context' => array( 'view' ) ),
 					'reference_no'     => array( 'type' => array( 'string', 'null' ), 'context' => array( 'view' ), 'readonly' => true ),
+					'receipt_url'        => array( 'type' => array( 'string', 'null' ), 'format' => 'uri', 'context' => array( 'view' ), 'readonly' => true ),
+					'receipt_expires_at' => array( 'type' => array( 'string', 'null' ), 'format' => 'date-time', 'context' => array( 'view' ), 'readonly' => true ),
 					'status'           => array( 'type' => 'string', 'enum' => array( 'pending', 'paid', 'rejected' ), 'context' => array( 'view' ), 'readonly' => true ),
 					'notes'            => array( 'type' => 'array', 'context' => array( 'view' ), 'readonly' => true ),
 					'date_created'     => array( 'type' => 'string', 'format' => 'date-time', 'context' => array( 'view' ), 'readonly' => true ),

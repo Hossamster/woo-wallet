@@ -487,6 +487,9 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 				'reference_no'          => $row->reference_no ? $row->reference_no : null,
 				'receipt_id'            => $row->receipt_id ? (int) $row->receipt_id : null,
 				'receipt_url'           => $row->receipt_id ? wp_get_attachment_url( $row->receipt_id ) : null,
+				'receipt_expires_at'    => ( $row->receipt_id && Woo_Wallet_Withdrawal::receipt_retention_days() > 0 )
+					? mysql_to_rfc3339( gmdate( 'Y-m-d H:i:s', strtotime( $row->date_created ) + ( Woo_Wallet_Withdrawal::receipt_retention_days() * DAY_IN_SECONDS ) ) )
+					: null,
 				'status'                => $row->status,
 				'transaction_id'        => (int) $row->transaction_id,
 				'refund_transaction_id' => $row->refund_transaction_id ? (int) $row->refund_transaction_id : null,
@@ -539,6 +542,7 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 					'reference_no'          => array( 'type' => array( 'string', 'null' ), 'context' => array( 'view' ) ),
 					'receipt_id'            => array( 'type' => array( 'integer', 'null' ), 'context' => array( 'view' ) ),
 					'receipt_url'           => array( 'type' => array( 'string', 'null' ), 'context' => array( 'view' ), 'readonly' => true ),
+					'receipt_expires_at'    => array( 'type' => array( 'string', 'null' ), 'format' => 'date-time', 'context' => array( 'view' ), 'readonly' => true ),
 					'status'                => array( 'type' => 'string', 'enum' => array( 'pending', 'processing', 'paid', 'rejected' ), 'context' => array( 'view' ), 'readonly' => true ),
 					'transaction_id'        => array( 'type' => 'integer', 'context' => array( 'view' ), 'readonly' => true ),
 					'refund_transaction_id' => array( 'type' => array( 'integer', 'null' ), 'context' => array( 'view' ), 'readonly' => true ),

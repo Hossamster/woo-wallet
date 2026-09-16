@@ -20,6 +20,11 @@ global $wpdb, $wp_version;
 wp_delete_post( get_option( '_woo_wallet_recharge_product' ), true );
 delete_option( '_woo_wallet_recharge_product' );
 
+// Dangling scheduled task, not user data — clear it regardless of
+// WALLET_REMOVE_ALL_DATA, since the callback it points at won't exist once
+// the plugin's files are gone either way.
+wp_clear_scheduled_hook( 'woo_wallet_withdrawal_cleanup_receipts_cron' );
+
 /*
  * Only remove ALL plugins data if WALLET_REMOVE_ALL_DATA constant is set to true in user's
  * wp-config.php. This is to prevent data loss when deleting the plugin from the backend
@@ -31,6 +36,8 @@ if ( defined( 'WALLET_REMOVE_ALL_DATA' ) && true === WALLET_REMOVE_ALL_DATA ) {
 	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_transactions" );
 	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_transaction_meta" );
 	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_referrals" );
+	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_withdrawals" );
+	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_withdrawal_notes" );
 
 	// Delete the balance cache user meta — the ledger it mirrored no longer exists.
 	$wpdb->query( "DELETE FROM $wpdb->usermeta WHERE meta_key = '_current_woo_wallet_balance'" );

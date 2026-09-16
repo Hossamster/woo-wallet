@@ -57,6 +57,32 @@ it safely — see [Recovery](#post-adminwithdrawalsidrecover) below. The
 customer-facing endpoints report `processing` as `pending`, since from the
 customer's point of view nothing meaningfully different has happened.
 
+## Receipt retention
+
+An uploaded receipt (attached via `receipt_id` on create or on
+`admin/withdrawals/{id}/process`) is only kept for a limited time — **90
+days after the request's `date_created` by default** — after which a daily
+housekeeping sweep permanently deletes the Media Library file and clears
+`receipt_id`/`receipt_url` on the request. This is intentional (storage
+hygiene, not a bug): don't rely on a receipt URL staying valid indefinitely,
+and don't cache it past `receipt_expires_at`.
+
+- The retention window is filterable server-side
+  (`woo_wallet_withdrawal_receipt_retention_days`, default `90`; `0` or less
+  disables the sweep entirely) — treat 90 days as the default, not a
+  guarantee, and always read `receipt_expires_at` from the response rather
+  than hardcoding it.
+- Once expired, `receipt_url` (and, on the admin object, `receipt_id`)
+  simply read `null` again, exactly as if no receipt had ever been attached
+  — there is no separate "expired" status or error.
+- The request record itself (amount, bank details, status, reference
+  number, notes) is never affected — only the uploaded file and the column
+  pointing at it. A private note is added to the request when this happens,
+  visible via `GET /admin/withdrawals/{id}`.
+- If a customer needs their receipt after it's expired, there is no API to
+  recover it — it has been permanently deleted. Point them to your support
+  channel before then.
+
 ---
 
 ## `GET /settings/public`
@@ -151,8 +177,10 @@ of another user's request id is not disclosed).
   "beneficiary_name": "Mohamed Ali",
   "account_number": "1234567890",
   "iban": "EG380019000500000000263180002",
-  "reference_no": null,
-  "status": "pending",
+  "reference_no": "TRX-99213",
+  "receipt_url": "https://example.com/wp-content/uploads/2026/09/receipt.pdf",
+  "receipt_expires_at": "2026-12-15T09:58:12",
+  "status": "paid",
   "notes": [
     { "note": "Sent via instant transfer, should land within an hour.", "date": "2026-09-16T10:02:00" }
   ],
@@ -165,6 +193,12 @@ of another user's request id is not disclosed).
 Only **public** notes appear here — private staff notes never leave the
 admin namespace. `reference_no`, `account_number` and `iban` are the
 customer's own submitted data, echoed back.
+
+`receipt_url` is `null` until an admin attaches one (see
+`admin/withdrawals/{id}/process`) and again once it's expired — see
+[Receipt retention](#receipt-retention) below. While it's set,
+`receipt_expires_at` tells you exactly when the link will stop working, so a
+client can warn the customer to save a copy before then.
 
 ---
 
@@ -296,6 +330,7 @@ Returns the updated [admin withdrawal object](#admin-withdrawal-object).
   "reference_no": "TRX-99213",
   "receipt_id": 1391,
   "receipt_url": "https://example.com/wp-content/uploads/2026/09/receipt.pdf",
+  "receipt_expires_at": "2026-12-15T09:58:12",
   "status": "paid",
   "transaction_id": 5502,
   "refund_transaction_id": null,

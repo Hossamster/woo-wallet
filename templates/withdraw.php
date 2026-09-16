@@ -34,6 +34,7 @@ $ww_status_labels = array(
 	'paid'       => __( 'Paid', 'woo-wallet' ),
 	'rejected'   => __( 'Rejected', 'woo-wallet' ),
 );
+$ww_retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
 ?>
 <!-- Withdraw Form -->
 <div class="woo-wallet-form-wrapper">
@@ -93,17 +94,28 @@ $ww_status_labels = array(
 					<th scope="col" class="ww-stmt-num"><?php esc_html_e( 'Amount', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Bank', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Reference', 'woo-wallet' ); ?></th>
+					<th scope="col"><?php esc_html_e( 'Receipt', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Status', 'woo-wallet' ); ?></th>
 				</tr>
 			</thead>
 			<tbody>
 				<?php foreach ( $ww_history as $ww_row ) : ?>
-					<?php $ww_public_notes = Woo_Wallet_Withdrawal::get_notes( $ww_row->id, 'public' ); ?>
+					<?php
+					$ww_public_notes = Woo_Wallet_Withdrawal::get_notes( $ww_row->id, 'public' );
+					$ww_receipt_url  = $ww_row->receipt_id ? wp_get_attachment_url( $ww_row->receipt_id ) : false;
+					?>
 					<tr>
 						<td data-label="<?php esc_attr_e( 'Date', 'woo-wallet' ); ?>"><?php echo esc_html( wc_string_to_datetime( $ww_row->date_created )->date_i18n( wc_date_format() ) ); ?></td>
 						<td class="ww-stmt-num" data-label="<?php esc_attr_e( 'Amount', 'woo-wallet' ); ?>"><?php echo wp_kses_post( wc_price( (float) $ww_row->amount, array( 'currency' => $ww_row->currency ? $ww_row->currency : get_option( 'woocommerce_currency' ) ) ) ); ?></td>
 						<td data-label="<?php esc_attr_e( 'Bank', 'woo-wallet' ); ?>"><?php echo esc_html( $ww_row->bank_name ); ?></td>
 						<td data-label="<?php esc_attr_e( 'Reference', 'woo-wallet' ); ?>"><?php echo $ww_row->reference_no ? esc_html( $ww_row->reference_no ) : '&ndash;'; ?></td>
+						<td data-label="<?php esc_attr_e( 'Receipt', 'woo-wallet' ); ?>">
+							<?php if ( $ww_receipt_url ) : ?>
+								<a href="<?php echo esc_url( $ww_receipt_url ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'View', 'woo-wallet' ); ?></a>
+							<?php else : ?>
+								&ndash;
+							<?php endif; ?>
+						</td>
 						<td data-label="<?php esc_attr_e( 'Status', 'woo-wallet' ); ?>">
 							<?php echo esc_html( isset( $ww_status_labels[ $ww_row->status ] ) ? $ww_status_labels[ $ww_row->status ] : $ww_row->status ); ?>
 							<?php foreach ( $ww_public_notes as $ww_note ) : ?>
@@ -115,5 +127,26 @@ $ww_status_labels = array(
 			</tbody>
 		</table>
 	</div>
+	<?php if ( $ww_retention_days > 0 ) : ?>
+		<p class="ww-stmt-note" style="margin-top:8px;">
+			<small>
+				<?php
+				if ( 0 === $ww_retention_days % 30 ) {
+					printf(
+						/* translators: %d: number of months */
+						esc_html( _n( 'Receipts are automatically removed %d month after the request date to save storage. If you need a copy after that, please contact us before it is removed.', 'Receipts are automatically removed %d months after the request date to save storage. If you need a copy after that, please contact us before it is removed.', (int) ( $ww_retention_days / 30 ), 'woo-wallet' ) ),
+						(int) ( $ww_retention_days / 30 )
+					);
+				} else {
+					printf(
+						/* translators: %d: number of days */
+						esc_html( _n( 'Receipts are automatically removed %d day after the request date to save storage. If you need a copy after that, please contact us before it is removed.', 'Receipts are automatically removed %d days after the request date to save storage. If you need a copy after that, please contact us before it is removed.', $ww_retention_days, 'woo-wallet' ) ),
+						$ww_retention_days
+					);
+				}
+				?>
+			</small>
+		</p>
+	<?php endif; ?>
 </div>
 <?php endif; ?>
