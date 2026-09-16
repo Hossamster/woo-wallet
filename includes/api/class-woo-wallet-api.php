@@ -80,6 +80,7 @@ if ( ! class_exists( 'WooWallet_API' ) ) {
 				'class-terawallet-rest-me-transactions-controller.php',
 				'class-terawallet-rest-me-topup-controller.php',
 				'class-terawallet-rest-me-transfer-controller.php',
+				'class-terawallet-rest-me-withdrawal-controller.php',
 				'class-terawallet-rest-me-referrals-controller.php',
 				'class-terawallet-rest-me-cashback-rules-controller.php',
 			) as $file ) {
@@ -94,6 +95,7 @@ if ( ! class_exists( 'WooWallet_API' ) ) {
 				'class-terawallet-rest-admin-transactions-controller.php',
 				'class-terawallet-rest-admin-users-controller.php',
 				'class-terawallet-rest-admin-transfer-controller.php',
+				'class-terawallet-rest-admin-withdrawal-controller.php',
 				'class-terawallet-rest-admin-reports-controller.php',
 			) as $file ) {
 				if ( file_exists( $admin_dir . $file ) ) {

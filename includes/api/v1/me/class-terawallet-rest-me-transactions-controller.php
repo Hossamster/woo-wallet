@@ -364,7 +364,7 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Transactions_Controller' ) ) {
 					'category'            => array(
 						'description' => __( 'Typed category derived from the _type transaction meta.', 'woo-wallet' ),
 						'type'        => 'string',
-						'enum'        => array( 'topup', 'cashback', 'cashback_adjustment', 'cashback_refund', 'partial_payment', 'purchase', 'transfer', 'refund', 'adjustment', 'other' ),
+						'enum'        => array( 'topup', 'cashback', 'cashback_adjustment', 'cashback_refund', 'partial_payment', 'purchase', 'transfer', 'withdrawal', 'withdrawal_refund', 'refund', 'adjustment', 'other' ),
 						'context'     => array( 'view' ),
 						'readonly'    => true,
 					),

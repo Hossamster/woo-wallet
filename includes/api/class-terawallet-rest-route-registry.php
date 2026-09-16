@@ -38,6 +38,7 @@ if ( ! class_exists( 'TeraWallet_REST_Route_Registry' ) ) {
 				'TeraWallet_REST_Me_Transactions_Controller',
 				'TeraWallet_REST_Me_Topup_Controller',
 				'TeraWallet_REST_Me_Transfer_Controller',
+				'TeraWallet_REST_Me_Withdrawal_Controller',
 				'TeraWallet_REST_Me_Referrals_Controller',
 				'TeraWallet_REST_Me_Cashback_Rules_Controller',
 				// public/*
@@ -46,6 +47,7 @@ if ( ! class_exists( 'TeraWallet_REST_Route_Registry' ) ) {
 				'TeraWallet_REST_Admin_Transactions_Controller',
 				'TeraWallet_REST_Admin_Users_Controller',
 				'TeraWallet_REST_Admin_Transfer_Controller',
+				'TeraWallet_REST_Admin_Withdrawal_Controller',
 				'TeraWallet_REST_Admin_Reports_Controller',
 				// settings/*
 				'TeraWallet_REST_Settings_V1_Controller',

@@ -148,7 +148,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @return bool
 		 */
 		public function is_withdraw_enabled() {
-			return 'on' === woo_wallet()->settings_api->get_option( 'is_enable_wallet_withdrawal', '_wallet_settings_withdrawal', 'off' );
+			return self::is_enabled_static();
 		}
 
 		/**
@@ -361,19 +361,50 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Validate a submitted request, reserve the funds, and record it.
+		 * Parse $_POST and delegate to submit_request() — the form-handler side
+		 * of the customer self-service flow. The REST controller
+		 * (TeraWallet_REST_Me_Withdrawal_Controller) calls submit_request()
+		 * directly with already-validated-by-the-schema params instead of
+		 * going through this method, the same way the wallet-transfer form
+		 * handler and its REST controller both sit in front of
+		 * WooWallet_Transfer_Service::execute().
 		 *
 		 * @return array {is_valid, message}
 		 */
 		private function handle_withdraw_request() {
-			if ( ! $this->is_withdraw_enabled() ) {
+			$amount           = isset( $_POST['woo_wallet_withdraw_amount'] ) ? (float) sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_amount'] ) ) : 0;
+			$bank_name        = isset( $_POST['woo_wallet_withdraw_bank'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_bank'] ) ) : '';
+			$beneficiary_name = isset( $_POST['woo_wallet_withdraw_beneficiary'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_beneficiary'] ) ) : '';
+			$account_number   = isset( $_POST['woo_wallet_withdraw_account_number'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_account_number'] ) ) : '';
+			$iban             = isset( $_POST['woo_wallet_withdraw_iban'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_iban'] ) ) : '';
+
+			return self::submit_request( get_current_user_id(), $amount, $bank_name, $beneficiary_name, $account_number, $iban );
+		}
+
+		/**
+		 * Validate a customer's own withdrawal request, reserve the funds, and
+		 * record it. The single entry point for customer self-service —
+		 * shared by the frontend form (via handle_withdraw_request() above)
+		 * and TeraWallet_REST_Me_Withdrawal_Controller::create_item(), so the
+		 * two surfaces can never drift on validation rules.
+		 *
+		 * @param int    $user_id          Customer id (always the logged-in user — never trust a request-supplied id here).
+		 * @param float  $amount           Requested payout amount.
+		 * @param string $bank_name        Must match one of get_configured_banks().
+		 * @param string $beneficiary_name Beneficiary name.
+		 * @param string $account_number   Bank account number.
+		 * @param string $iban             Optional IBAN.
+		 * @return array {is_valid, message, id?, charge?}
+		 */
+		public static function submit_request( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $iban = '' ) {
+			if ( ! self::is_enabled_static() ) {
 				return array(
 					'is_valid' => false,
 					'message'  => __( 'Wallet withdrawal is not available right now.', 'woo-wallet' ),
 				);
 			}
 
-			$user_id = get_current_user_id();
+			$user_id = (int) $user_id;
 			if ( ! $user_id ) {
 				return array(
 					'is_valid' => false,
@@ -393,7 +424,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			}
 			set_transient( $rate_key, $rate_count + 1, MINUTE_IN_SECONDS );
 
-			$amount = isset( $_POST['woo_wallet_withdraw_amount'] ) ? (float) sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_amount'] ) ) : 0;
+			$amount = (float) $amount;
 			if ( $amount <= 0 ) {
 				return array(
 					'is_valid' => false,
@@ -418,7 +449,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
-			$bank_name = isset( $_POST['woo_wallet_withdraw_bank'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_bank'] ) ) : '';
+			$bank_name     = (string) $bank_name;
 			$allowed_banks = self::get_configured_banks();
 			if ( '' === $bank_name || ! isset( $allowed_banks[ $bank_name ] ) ) {
 				return array(
@@ -427,7 +458,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
-			$beneficiary_name = isset( $_POST['woo_wallet_withdraw_beneficiary'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_beneficiary'] ) ) : '';
+			$beneficiary_name = trim( (string) $beneficiary_name );
 			if ( '' === $beneficiary_name ) {
 				return array(
 					'is_valid' => false,
@@ -435,7 +466,6 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
-			$account_number = isset( $_POST['woo_wallet_withdraw_account_number'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_account_number'] ) ) : '';
 			$account_number = preg_replace( '/\s+/', '', (string) $account_number );
 			if ( '' === $account_number ) {
 				return array(
@@ -444,7 +474,6 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
-			$iban = isset( $_POST['woo_wallet_withdraw_iban'] ) ? sanitize_text_field( wp_unslash( $_POST['woo_wallet_withdraw_iban'] ) ) : '';
 			$iban = strtoupper( preg_replace( '/\s+/', '', (string) $iban ) );
 			if ( '' !== $iban && ! apply_filters( 'woo_wallet_is_valid_egyptian_iban', (bool) preg_match( '/^EG\d{27}$/', $iban ), $iban ) ) {
 				return array(
@@ -463,7 +492,19 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			return array(
 				'is_valid' => true,
 				'message'  => __( 'Your withdrawal request has been submitted and is awaiting approval.', 'woo-wallet' ),
+				'id'       => $result['id'],
+				'charge'   => $result['charge'],
 			);
+		}
+
+		/**
+		 * Static-context version of is_withdraw_enabled() — the REST
+		 * controller calls this without an instance.
+		 *
+		 * @return bool
+		 */
+		public static function is_enabled_static() {
+			return 'on' === woo_wallet()->settings_api->get_option( 'is_enable_wallet_withdrawal', '_wallet_settings_withdrawal', 'off' );
 		}
 
 		/**
@@ -1192,10 +1233,8 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			check_admin_referer( 'woo_wallet_withdrawal_create' );
 
 			$admin_id = get_current_user_id();
-			$notice   = array();
 
-			$target_user_id = isset( $_POST['user_id'] ) ? absint( $_POST['user_id'] ) : 0;
-			$customer        = $target_user_id ? get_userdata( $target_user_id ) : false;
+			$target_user_id  = isset( $_POST['user_id'] ) ? absint( $_POST['user_id'] ) : 0;
 			$amount          = isset( $_POST['amount'] ) ? (float) sanitize_text_field( wp_unslash( $_POST['amount'] ) ) : 0;
 			$bank_name       = isset( $_POST['bank_name'] ) ? sanitize_text_field( wp_unslash( $_POST['bank_name'] ) ) : '';
 			$beneficiary     = isset( $_POST['beneficiary_name'] ) ? sanitize_text_field( wp_unslash( $_POST['beneficiary_name'] ) ) : '';
@@ -1206,82 +1245,151 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			$note            = isset( $_POST['note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['note'] ) ) : '';
 			$note_visibility = isset( $_POST['note_visibility'] ) && 'public' === $_POST['note_visibility'] ? 'public' : 'private';
 
-			$field_error = '';
-			if ( ! $customer ) {
-				$field_error = __( 'Please select a customer.', 'woo-wallet' );
-			} elseif ( $amount <= 0 ) {
-				$field_error = __( 'Amount must be greater than zero.', 'woo-wallet' );
-			} elseif ( '' === $bank_name || '' === $beneficiary || '' === $account_number ) {
-				$field_error = __( 'Bank, beneficiary name and account number are required.', 'woo-wallet' );
-			}
+			// Cheap pre-check purely to decide whether it's worth uploading the
+			// receipt at all — admin_create() re-validates authoritatively below
+			// regardless, this just avoids wasting an upload on a doomed submission.
+			$looks_valid = $target_user_id && $amount > 0 && '' !== $bank_name && '' !== $beneficiary && '' !== $account_number;
 
-			if ( $field_error ) {
+			if ( ! $looks_valid ) {
 				$notice = array(
 					'type'    => 'error',
-					'message' => $field_error,
+					'message' => __( 'Please select a customer and fill in the amount, bank, beneficiary name and account number.', 'woo-wallet' ),
 				);
-			} else {
-				// Validate/upload the receipt (if one was submitted) before reserving
-				// any funds, so a failed upload never leaves a debit sitting against
-				// the customer's wallet with nothing to show for it.
-				$receipt = self::maybe_handle_receipt_upload( 'receipt' );
-				if ( $receipt['error'] ) {
-					$notice = array(
-						'type'    => 'error',
-						/* translators: %s: upload error message */
-						'message' => sprintf( __( 'Receipt upload failed, so the withdrawal was not created: %s', 'woo-wallet' ), $receipt['error'] ),
-					);
-					set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
-					wp_safe_redirect( admin_url( 'admin.php?page=woo-wallet-withdrawals&action=new' ) );
-					exit();
-				}
-				$result = self::reserve_and_insert( $target_user_id, $amount, $bank_name, $beneficiary, $account_number, $iban, $admin_id, $status, $reference_no );
-				if ( ! $result['is_valid'] ) {
-					if ( $receipt['id'] ) {
-						wp_delete_attachment( $receipt['id'], true );
-					}
-					$notice = array(
-						'type'    => 'error',
-						'message' => $result['message'],
-					);
-				} else {
-					if ( $receipt['id'] ) {
-						global $wpdb;
-						$wpdb->update( self::table(), array( 'receipt_id' => $receipt['id'] ), array( 'id' => $result['id'] ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-					}
-					if ( $note ) {
-						self::add_note( $result['id'], $note, $note_visibility, $admin_id );
-					}
-					do_action( 'woo_wallet_withdrawal_requested', $result['id'], $target_user_id, $amount + $result['charge'] );
-					if ( 'paid' === $status ) {
-						do_action( 'woo_wallet_withdrawal_paid', $result['id'], $target_user_id );
-					}
-					set_transient(
-						'woo_wallet_withdrawal_admin_notice_' . $admin_id,
-						array(
-							'type'    => 'success',
-							/* translators: %d: withdrawal request id */
-							'message' => sprintf( __( 'Withdrawal #%d created.', 'woo-wallet' ), $result['id'] ),
-						),
-						MINUTE_IN_SECONDS
-					);
-					wp_safe_redirect(
-						add_query_arg(
-							array(
-								'page'   => 'woo-wallet-withdrawals',
-								'action' => 'view',
-								'id'     => $result['id'],
-							),
-							admin_url( 'admin.php' )
-						)
-					);
-					exit();
-				}
+				set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
+				wp_safe_redirect( admin_url( 'admin.php?page=woo-wallet-withdrawals&action=new' ) );
+				exit();
 			}
 
-			set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
-			wp_safe_redirect( admin_url( 'admin.php?page=woo-wallet-withdrawals&action=new' ) );
+			// Validate/upload the receipt (if one was submitted) before reserving
+			// any funds, so a failed upload never leaves a debit sitting against
+			// the customer's wallet with nothing to show for it.
+			$receipt = self::maybe_handle_receipt_upload( 'receipt' );
+			if ( $receipt['error'] ) {
+				$notice = array(
+					'type'    => 'error',
+					/* translators: %s: upload error message */
+					'message' => sprintf( __( 'Receipt upload failed, so the withdrawal was not created: %s', 'woo-wallet' ), $receipt['error'] ),
+				);
+				set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
+				wp_safe_redirect( admin_url( 'admin.php?page=woo-wallet-withdrawals&action=new' ) );
+				exit();
+			}
+
+			$result = self::admin_create( $target_user_id, $amount, $bank_name, $beneficiary, $account_number, $iban, $admin_id, $status, $reference_no, $receipt['id'], $note, $note_visibility );
+
+			if ( ! $result['is_valid'] ) {
+				// This upload was created fresh for this one submission (unlike a
+				// REST caller's receipt_id, which may be a media item they intend
+				// to keep or reuse) — safe, and correct, to clean it up here.
+				if ( $receipt['id'] ) {
+					wp_delete_attachment( $receipt['id'], true );
+				}
+				$notice = array(
+					'type'    => 'error',
+					'message' => $result['message'],
+				);
+				set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
+				wp_safe_redirect( admin_url( 'admin.php?page=woo-wallet-withdrawals&action=new' ) );
+				exit();
+			}
+
+			set_transient(
+				'woo_wallet_withdrawal_admin_notice_' . $admin_id,
+				array(
+					'type'    => 'success',
+					'message' => $result['message'],
+				),
+				MINUTE_IN_SECONDS
+			);
+			wp_safe_redirect(
+				add_query_arg(
+					array(
+						'page'   => 'woo-wallet-withdrawals',
+						'action' => 'view',
+						'id'     => $result['id'],
+					),
+					admin_url( 'admin.php' )
+				)
+			);
 			exit();
+		}
+
+		/**
+		 * Manually log a withdrawal on a customer's behalf — staff-attributed
+		 * (created_by = $admin_id, distinct from the customer's own user_id).
+		 * Shared by the classic admin-post handler above and
+		 * TeraWallet_REST_Admin_Withdrawal_Controller::create_item().
+		 *
+		 * Deliberately does NOT constrain $bank_name to get_configured_banks():
+		 * this is a staff-entered record of a request that may have come in by
+		 * phone, not the customer self-service dropdown (submit_request()),
+		 * which does constrain it.
+		 *
+		 * @param int    $target_user_id   Customer whose wallet is charged.
+		 * @param float  $amount           Requested payout amount.
+		 * @param string $bank_name        Free-text bank name.
+		 * @param string $beneficiary_name Beneficiary name.
+		 * @param string $account_number   Bank account number.
+		 * @param string $iban             Optional IBAN.
+		 * @param int    $admin_id         Staff member creating the request.
+		 * @param string $status           'pending' or 'paid'.
+		 * @param string $reference_no     Optional bank transfer reference number.
+		 * @param int    $receipt_id       Optional, an already-uploaded attachment id.
+		 * @param string $note             Optional note.
+		 * @param string $note_visibility  'public' or 'private'.
+		 * @return array {is_valid, message, id?}
+		 */
+		public static function admin_create( $target_user_id, $amount, $bank_name, $beneficiary_name, $account_number, $iban, $admin_id, $status, $reference_no = '', $receipt_id = 0, $note = '', $note_visibility = 'private' ) {
+			$target_user_id   = (int) $target_user_id;
+			$customer         = $target_user_id ? get_userdata( $target_user_id ) : false;
+			$amount           = (float) $amount;
+			$bank_name        = trim( (string) $bank_name );
+			$beneficiary_name = trim( (string) $beneficiary_name );
+			$account_number   = preg_replace( '/\s+/', '', (string) $account_number );
+			$status           = 'paid' === $status ? 'paid' : 'pending';
+
+			if ( ! $customer ) {
+				return array(
+					'is_valid' => false,
+					'message'  => __( 'Please select a customer.', 'woo-wallet' ),
+				);
+			}
+			if ( $amount <= 0 ) {
+				return array(
+					'is_valid' => false,
+					'message'  => __( 'Amount must be greater than zero.', 'woo-wallet' ),
+				);
+			}
+			if ( '' === $bank_name || '' === $beneficiary_name || '' === $account_number ) {
+				return array(
+					'is_valid' => false,
+					'message'  => __( 'Bank, beneficiary name and account number are required.', 'woo-wallet' ),
+				);
+			}
+
+			$result = self::reserve_and_insert( $target_user_id, $amount, $bank_name, $beneficiary_name, $account_number, (string) $iban, (int) $admin_id, $status, (string) $reference_no );
+			if ( ! $result['is_valid'] ) {
+				return $result;
+			}
+
+			if ( $receipt_id ) {
+				global $wpdb;
+				$wpdb->update( self::table(), array( 'receipt_id' => (int) $receipt_id ), array( 'id' => $result['id'] ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+			}
+			if ( $note ) {
+				self::add_note( $result['id'], $note, $note_visibility, $admin_id );
+			}
+			do_action( 'woo_wallet_withdrawal_requested', $result['id'], $target_user_id, $amount + $result['charge'] );
+			if ( 'paid' === $status ) {
+				do_action( 'woo_wallet_withdrawal_paid', $result['id'], $target_user_id );
+			}
+
+			return array(
+				'is_valid' => true,
+				/* translators: %d: withdrawal request id */
+				'message'  => sprintf( __( 'Withdrawal #%d created.', 'woo-wallet' ), $result['id'] ),
+				'id'       => $result['id'],
+			);
 		}
 
 		/**
@@ -1330,181 +1438,33 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			$note            = isset( $_POST['note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['note'] ) ) : '';
 			$note_visibility = isset( $_POST['note_visibility'] ) && 'public' === $_POST['note_visibility'] ? 'public' : 'private';
 
-			$request = $id ? self::get_request( $id ) : null;
-			$notice  = array(
-				'type'    => 'error',
-				'message' => __( 'Withdrawal request not found.', 'woo-wallet' ),
-			);
-
-			if ( $request && 'pending' !== $request->status ) {
+			// Validate/upload the receipt (if one was submitted) before touching
+			// any state, so a failed upload never leaves the request half-processed.
+			$receipt = self::maybe_handle_receipt_upload( 'receipt' );
+			if ( $receipt['error'] ) {
 				$notice = array(
 					'type'    => 'error',
-					'message' => __( 'This request has already been processed.', 'woo-wallet' ),
+					/* translators: %s: upload error message */
+					'message' => sprintf( __( 'Receipt upload failed, so the request was not changed: %s', 'woo-wallet' ), $receipt['error'] ),
 				);
-			} elseif ( $request && in_array( $action, array( 'paid', 'reject' ), true ) ) {
-				// Validate/upload the receipt (if one was submitted) before touching
-				// any state, so a failed upload never leaves the request half-processed.
-				$receipt = self::maybe_handle_receipt_upload( 'receipt' );
-				if ( $receipt['error'] ) {
-					$notice = array(
-						'type'    => 'error',
-						/* translators: %s: upload error message */
-						'message' => sprintf( __( 'Receipt upload failed, so the request was not changed: %s', 'woo-wallet' ), $receipt['error'] ),
-					);
-				} elseif ( 'paid' === $action ) {
-					// Marking paid has no follow-up money movement (the admin already
-					// sent the transfer manually) — one atomic, race-safe update is enough.
-					global $wpdb;
-					$update = array(
-						'status'       => 'paid',
-						'processed_by' => $admin_id,
-						'date_updated' => current_time( 'mysql' ),
-					);
-					$formats = array( '%s', '%d', '%s' );
-					if ( $reference_no ) {
-						$update['reference_no'] = $reference_no;
-						$formats[]              = '%s';
-					}
-					if ( $receipt['id'] ) {
-						$update['receipt_id'] = $receipt['id'];
-						$formats[]             = '%d';
-					}
-
-					// Conditioned on `status = 'pending'` and checked via the
-					// affected-row count: this is what makes two staff members
-					// racing to process the same request safe.
-					$affected = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-						self::table(),
-						$update,
-						array(
-							'id'     => $request->id,
-							'status' => 'pending',
-						),
-						$formats,
-						array( '%d', '%s' )
-					);
-
-					if ( ! $affected ) {
-						if ( $receipt['id'] ) {
-							wp_delete_attachment( $receipt['id'], true );
-						}
-						$notice = array(
-							'type'    => 'error',
-							'message' => __( 'This request was just processed by someone else — no changes were made.', 'woo-wallet' ),
-						);
-					} else {
-						if ( $note ) {
-							self::add_note( $request->id, $note, $note_visibility, $admin_id );
-						}
-						do_action( 'woo_wallet_withdrawal_paid', $request->id, $request->user_id );
-						$notice = array(
-							'type'    => 'success',
-							/* translators: %d: withdrawal request id */
-							'message' => sprintf( __( 'Withdrawal request #%d marked as paid.', 'woo-wallet' ), $request->id ),
-						);
-					}
-				} else {
-					// Reject DOES have a follow-up money movement (crediting the
-					// reservation back), which can itself fail. Two-phase: first
-					// atomically CLAIM the row (pending -> processing) so no other
-					// staff member can act on it concurrently; only after the
-					// refund actually succeeds does it finalize to 'rejected'. If
-					// the refund fails, it is reverted to 'pending' so it can be
-					// retried — never left stuck as 'rejected' with the money
-					// never having moved (which is the whole bug this avoids).
-					global $wpdb;
-					$claim = array(
-						'status'       => 'processing',
-						'processed_by' => $admin_id,
-						'date_updated' => current_time( 'mysql' ),
-					);
-					$claim_formats = array( '%s', '%d', '%s' );
-					if ( $reference_no ) {
-						$claim['reference_no'] = $reference_no;
-						$claim_formats[]       = '%s';
-					}
-					if ( $receipt['id'] ) {
-						$claim['receipt_id'] = $receipt['id'];
-						$claim_formats[]      = '%d';
-					}
-					$claimed = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-						self::table(),
-						$claim,
-						array(
-							'id'     => $request->id,
-							'status' => 'pending',
-						),
-						$claim_formats,
-						array( '%d', '%s' )
-					);
-
-					if ( ! $claimed ) {
-						if ( $receipt['id'] ) {
-							wp_delete_attachment( $receipt['id'], true );
-						}
-						$notice = array(
-							'type'    => 'error',
-							'message' => __( 'This request was just processed by someone else — no changes were made.', 'woo-wallet' ),
-						);
-					} else {
-						// idempotent_refund() checks the wallet ledger itself before
-						// crediting anything — see its docblock for why that (and not
-						// the refund_transaction_id column written below) is the
-						// actual guarantee against a double refund.
-						$credit_id = self::idempotent_refund( $request );
-
-						if ( $credit_id ) {
-							// One statement, not two: if this is lost to a crash, the
-							// row is simply stuck on 'processing' with the refund
-							// already tagged in the ledger, which the Recover action
-							// resolves safely by calling idempotent_refund() again
-							// (finds the tag, credits nothing new) — the column here
-							// is fast-display bookkeeping, not the safety mechanism.
-							$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-								self::table(),
-								array(
-									'status'                => 'rejected',
-									'refund_transaction_id' => $credit_id,
-								),
-								array( 'id' => $request->id ),
-								array( '%s', '%d' ),
-								array( '%d' )
-							);
-							if ( $note ) {
-								self::add_note( $request->id, $note, $note_visibility, $admin_id );
-							}
-							do_action( 'woo_wallet_withdrawal_rejected', $request->id, $request->user_id, $credit_id );
-							$notice = array(
-								'type'    => 'success',
-								/* translators: %d: withdrawal request id */
-								'message' => sprintf( __( 'Withdrawal request #%d rejected and funds returned to the customer wallet.', 'woo-wallet' ), $request->id ),
-							);
-						} else {
-							// The refund failed — put the request back to 'pending'
-							// rather than leave it stuck 'rejected'/'processing'
-							// with the customer never actually paid back.
-							$refund_amount = (float) $request->amount + (float) $request->charge;
-							$wpdb->update( self::table(), array( 'status' => 'pending' ), array( 'id' => $request->id ), array( '%s' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-							if ( $note ) {
-								self::add_note( $request->id, $note, $note_visibility, $admin_id );
-							}
-							error_log( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
-								sprintf(
-									'Axfit Wallet: withdrawal #%d reject refund FAILED — reverted to pending for retry. user_id=%d amount=%s',
-									$request->id,
-									$request->user_id,
-									$refund_amount
-								)
-							);
-							do_action( 'woo_wallet_withdrawal_reject_refund_failed', $request->id, $request->user_id, $refund_amount );
-							$notice = array(
-								'type'    => 'error',
-								'message' => __( 'The refund to the customer wallet failed, so the request was left pending. Please try Reject again.', 'woo-wallet' ),
-							);
-						}
-					}
-				}
+				set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
+				wp_safe_redirect( add_query_arg( array( 'page' => 'woo-wallet-withdrawals', 'action' => 'view', 'id' => $id ), admin_url( 'admin.php' ) ) );
+				exit();
 			}
+
+			$result = self::admin_process( $id, $action, $admin_id, $reference_no, $receipt['id'], $note, $note_visibility );
+
+			// This upload was created fresh for this one submission (unlike a REST
+			// caller's receipt_id, which may be a media item they intend to keep or
+			// reuse) — safe, and correct, to clean it up if it never got attached.
+			if ( ! empty( $result['receipt_orphaned'] ) && $receipt['id'] ) {
+				wp_delete_attachment( $receipt['id'], true );
+			}
+
+			$notice = array(
+				'type'    => $result['is_valid'] ? 'success' : 'error',
+				'message' => $result['message'],
+			);
 
 			set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
 			wp_safe_redirect(
@@ -1518,6 +1478,199 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				)
 			);
 			exit();
+		}
+
+		/**
+		 * Mark a pending withdrawal request paid or rejected. Shared by the
+		 * classic admin-post handler above and
+		 * TeraWallet_REST_Admin_Withdrawal_Controller::process_item().
+		 *
+		 * @param int    $id              Withdrawal request id.
+		 * @param string $action          'paid' or 'reject'.
+		 * @param int    $admin_id        Staff member processing the request.
+		 * @param string $reference_no    Optional bank transfer reference number.
+		 * @param int    $receipt_id      Optional, an already-uploaded attachment id.
+		 * @param string $note            Optional note.
+		 * @param string $note_visibility 'public' or 'private'.
+		 * @return array {is_valid, message, receipt_orphaned?} `receipt_orphaned` is
+		 *               true only when $receipt_id was passed but the request could
+		 *               not be claimed (a race with another staff member) — the only
+		 *               case where a fresh upload never gets attached to anything.
+		 */
+		public static function admin_process( $id, $action, $admin_id, $reference_no = '', $receipt_id = 0, $note = '', $note_visibility = 'private' ) {
+			$request = $id ? self::get_request( $id ) : null;
+			if ( ! $request ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'Withdrawal request not found.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+			if ( 'pending' !== $request->status ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'This request has already been processed.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+			if ( ! in_array( $action, array( 'paid', 'reject' ), true ) ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'Invalid action.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+
+			global $wpdb;
+
+			if ( 'paid' === $action ) {
+				// Marking paid has no follow-up money movement (the admin already
+				// sent the transfer manually) — one atomic, race-safe update is enough.
+				$update = array(
+					'status'       => 'paid',
+					'processed_by' => $admin_id,
+					'date_updated' => current_time( 'mysql' ),
+				);
+				$formats = array( '%s', '%d', '%s' );
+				if ( $reference_no ) {
+					$update['reference_no'] = $reference_no;
+					$formats[]              = '%s';
+				}
+				if ( $receipt_id ) {
+					$update['receipt_id'] = $receipt_id;
+					$formats[]             = '%d';
+				}
+
+				// Conditioned on `status = 'pending'` and checked via the
+				// affected-row count: this is what makes two staff members
+				// racing to process the same request safe.
+				$affected = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+					self::table(),
+					$update,
+					array(
+						'id'     => $request->id,
+						'status' => 'pending',
+					),
+					$formats,
+					array( '%d', '%s' )
+				);
+
+				if ( ! $affected ) {
+					return array(
+						'is_valid'         => false,
+						'message'          => __( 'This request was just processed by someone else — no changes were made.', 'woo-wallet' ),
+						'receipt_orphaned' => (bool) $receipt_id,
+					);
+				}
+				if ( $note ) {
+					self::add_note( $request->id, $note, $note_visibility, $admin_id );
+				}
+				do_action( 'woo_wallet_withdrawal_paid', $request->id, $request->user_id );
+				return array(
+					'is_valid' => true,
+					/* translators: %d: withdrawal request id */
+					'message'  => sprintf( __( 'Withdrawal request #%d marked as paid.', 'woo-wallet' ), $request->id ),
+				);
+			}
+
+			// Reject DOES have a follow-up money movement (crediting the
+			// reservation back), which can itself fail. Two-phase: first
+			// atomically CLAIM the row (pending -> processing) so no other
+			// staff member can act on it concurrently; only after the
+			// refund actually succeeds does it finalize to 'rejected'. If
+			// the refund fails, it is reverted to 'pending' so it can be
+			// retried — never left stuck as 'rejected' with the money
+			// never having moved (which is the whole bug this avoids).
+			$claim = array(
+				'status'       => 'processing',
+				'processed_by' => $admin_id,
+				'date_updated' => current_time( 'mysql' ),
+			);
+			$claim_formats = array( '%s', '%d', '%s' );
+			if ( $reference_no ) {
+				$claim['reference_no'] = $reference_no;
+				$claim_formats[]       = '%s';
+			}
+			if ( $receipt_id ) {
+				$claim['receipt_id'] = $receipt_id;
+				$claim_formats[]      = '%d';
+			}
+			$claimed = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+				self::table(),
+				$claim,
+				array(
+					'id'     => $request->id,
+					'status' => 'pending',
+				),
+				$claim_formats,
+				array( '%d', '%s' )
+			);
+
+			if ( ! $claimed ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'This request was just processed by someone else — no changes were made.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+
+			// idempotent_refund() checks the wallet ledger itself before
+			// crediting anything — see its docblock for why that (and not
+			// the refund_transaction_id column written below) is the
+			// actual guarantee against a double refund.
+			$credit_id = self::idempotent_refund( $request );
+
+			if ( $credit_id ) {
+				// One statement, not two: if this is lost to a crash, the
+				// row is simply stuck on 'processing' with the refund
+				// already tagged in the ledger, which the Recover action
+				// resolves safely by calling idempotent_refund() again
+				// (finds the tag, credits nothing new) — the column here
+				// is fast-display bookkeeping, not the safety mechanism.
+				$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+					self::table(),
+					array(
+						'status'                => 'rejected',
+						'refund_transaction_id' => $credit_id,
+					),
+					array( 'id' => $request->id ),
+					array( '%s', '%d' ),
+					array( '%d' )
+				);
+				if ( $note ) {
+					self::add_note( $request->id, $note, $note_visibility, $admin_id );
+				}
+				do_action( 'woo_wallet_withdrawal_rejected', $request->id, $request->user_id, $credit_id );
+				return array(
+					'is_valid' => true,
+					/* translators: %d: withdrawal request id */
+					'message'  => sprintf( __( 'Withdrawal request #%d rejected and funds returned to the customer wallet.', 'woo-wallet' ), $request->id ),
+				);
+			}
+
+			// The refund failed — put the request back to 'pending' rather than
+			// leave it stuck 'rejected'/'processing' with the customer never
+			// actually paid back. The receipt/reference already written during
+			// the claim step stay on the row (not orphaned) — only a lost race
+			// (above) ever leaves a fresh upload unattached to anything.
+			$refund_amount = (float) $request->amount + (float) $request->charge;
+			$wpdb->update( self::table(), array( 'status' => 'pending' ), array( 'id' => $request->id ), array( '%s' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+			if ( $note ) {
+				self::add_note( $request->id, $note, $note_visibility, $admin_id );
+			}
+			error_log( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log
+				sprintf(
+					'Axfit Wallet: withdrawal #%d reject refund FAILED — reverted to pending for retry. user_id=%d amount=%s',
+					$request->id,
+					$request->user_id,
+					$refund_amount
+				)
+			);
+			do_action( 'woo_wallet_withdrawal_reject_refund_failed', $request->id, $request->user_id, $refund_amount );
+			return array(
+				'is_valid' => false,
+				'message'  => __( 'The refund to the customer wallet failed, so the request was left pending. Please try Reject again.', 'woo-wallet' ),
+			);
 		}
 
 		/**
@@ -1607,73 +1760,13 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			}
 			check_admin_referer( 'woo_wallet_withdrawal_recover' );
 
-			global $wpdb;
 			$admin_id = get_current_user_id();
 			$id       = isset( $_POST['withdrawal_id'] ) ? absint( $_POST['withdrawal_id'] ) : 0;
-			$request  = $id ? self::get_request( $id ) : null;
-
-			if ( ! $request || 'processing' !== $request->status ) {
-				$notice = array(
-					'type'    => 'error',
-					'message' => __( 'This request is not awaiting recovery (it may already have been resolved).', 'woo-wallet' ),
-				);
-			} else {
-				$credit_id = self::idempotent_refund( $request );
-
-				if ( $credit_id ) {
-					// Conditioned on `status = 'processing'`: if two staff members
-					// both land here for the same row, only one of these updates
-					// affects a row, so the hook/note below fire exactly once.
-					$affected = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-						self::table(),
-						array(
-							'status'                => 'rejected',
-							'refund_transaction_id' => $credit_id,
-						),
-						array(
-							'id'     => $request->id,
-							'status' => 'processing',
-						),
-						array( '%s', '%d' ),
-						array( '%d', '%s' )
-					);
-
-					if ( $affected ) {
-						self::add_note(
-							$request->id,
-							sprintf(
-								/* translators: %d: refund transaction id */
-								__( 'Recovered: finished as rejected. Refund is wallet transaction #%d (reused the existing refund if the interruption happened after it was already sent — never sent a second one).', 'woo-wallet' ),
-								$credit_id
-							),
-							'private',
-							$admin_id
-						);
-						do_action( 'woo_wallet_withdrawal_rejected', $request->id, $request->user_id, $credit_id );
-						$notice = array(
-							'type'    => 'success',
-							/* translators: %d: withdrawal request id */
-							'message' => sprintf( __( 'Withdrawal request #%d recovered and finished as rejected.', 'woo-wallet' ), $request->id ),
-						);
-					} else {
-						$notice = array(
-							'type'    => 'success',
-							'message' => __( 'This request was already recovered by someone else — no changes were made.', 'woo-wallet' ),
-						);
-					}
-				} else {
-					// The refund still couldn't be issued right now (wallet locked,
-					// DB error...) — leave it on 'processing' rather than guess;
-					// the admin can try Recover again once the underlying issue
-					// clears. Resetting to 'pending' here would be exactly the bug
-					// this design avoids if the refund actually did go out on a
-					// prior attempt this call simply failed to find.
-					$notice = array(
-						'type'    => 'error',
-						'message' => __( 'The refund could not be issued right now, so nothing was changed. Please try Recover again.', 'woo-wallet' ),
-					);
-				}
-			}
+			$result   = self::admin_recover( $id, $admin_id );
+			$notice   = array(
+				'type'    => $result['is_valid'] ? 'success' : 'error',
+				'message' => $result['message'],
+			);
 
 			set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, $notice, MINUTE_IN_SECONDS );
 			wp_safe_redirect(
@@ -1687,6 +1780,89 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				)
 			);
 			exit();
+		}
+
+		/**
+		 * Recover a withdrawal request stuck on 'processing'. Shared by the
+		 * classic admin-post handler above and
+		 * TeraWallet_REST_Admin_Withdrawal_Controller::recover_item().
+		 *
+		 * See handle_admin_recover_request()'s docblock for why this always
+		 * calls idempotent_refund() rather than branching on the request's own
+		 * refund_transaction_id column.
+		 *
+		 * @param int $id       Withdrawal request id.
+		 * @param int $admin_id Staff member performing the recovery.
+		 * @return array {is_valid, message} `is_valid` is true both when this
+		 *               call finished the recovery and when it finds the
+		 *               request was already recovered by someone else — both
+		 *               are a successful end state for the caller.
+		 */
+		public static function admin_recover( $id, $admin_id ) {
+			$request = $id ? self::get_request( $id ) : null;
+			if ( ! $request || 'processing' !== $request->status ) {
+				return array(
+					'is_valid' => false,
+					'message'  => __( 'This request is not awaiting recovery (it may already have been resolved).', 'woo-wallet' ),
+				);
+			}
+
+			$credit_id = self::idempotent_refund( $request );
+
+			if ( ! $credit_id ) {
+				// The refund still couldn't be issued right now (wallet locked,
+				// DB error...) — leave it on 'processing' rather than guess;
+				// the caller can try Recover again once the underlying issue
+				// clears. Resetting to 'pending' here would be exactly the bug
+				// this design avoids if the refund actually did go out on a
+				// prior attempt this call simply failed to find.
+				return array(
+					'is_valid' => false,
+					'message'  => __( 'The refund could not be issued right now, so nothing was changed. Please try Recover again.', 'woo-wallet' ),
+				);
+			}
+
+			global $wpdb;
+			// Conditioned on `status = 'processing'`: if two staff members both
+			// land here for the same row, only one of these updates affects a
+			// row, so the hook/note below fire exactly once.
+			$affected = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+				self::table(),
+				array(
+					'status'                => 'rejected',
+					'refund_transaction_id' => $credit_id,
+				),
+				array(
+					'id'     => $request->id,
+					'status' => 'processing',
+				),
+				array( '%s', '%d' ),
+				array( '%d', '%s' )
+			);
+
+			if ( ! $affected ) {
+				return array(
+					'is_valid' => true,
+					'message'  => __( 'This request was already recovered by someone else — no changes were made.', 'woo-wallet' ),
+				);
+			}
+
+			self::add_note(
+				$request->id,
+				sprintf(
+					/* translators: %d: refund transaction id */
+					__( 'Recovered: finished as rejected. Refund is wallet transaction #%d (reused the existing refund if the interruption happened after it was already sent — never sent a second one).', 'woo-wallet' ),
+					$credit_id
+				),
+				'private',
+				$admin_id
+			);
+			do_action( 'woo_wallet_withdrawal_rejected', $request->id, $request->user_id, $credit_id );
+			return array(
+				'is_valid' => true,
+				/* translators: %d: withdrawal request id */
+				'message'  => sprintf( __( 'Withdrawal request #%d recovered and finished as rejected.', 'woo-wallet' ), $request->id ),
+			);
 		}
 	}
 }

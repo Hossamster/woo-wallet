@@ -101,6 +101,7 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Controller' ) ) {
 				'can_topup'    => 'on' === $settings->get_option( 'is_enable_wallet_partial_payment', '_wallet_settings_general', 'on' )
 					|| 'on' === $settings->get_option( 'is_enable_wallet_topup', '_wallet_settings_general', 'on' ),
 				'can_transfer' => 'on' === $settings->get_option( 'is_enable_wallet_transfer', '_wallet_settings_general', 'on' ),
+				'can_withdraw' => class_exists( 'Woo_Wallet_Withdrawal' ) && Woo_Wallet_Withdrawal::is_enabled_static(),
 				'can_view_referrals' => true,
 			);
 

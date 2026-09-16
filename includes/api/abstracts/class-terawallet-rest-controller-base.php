@@ -275,6 +275,8 @@ if ( ! class_exists( 'TeraWallet_REST_Controller_Base' ) ) {
 				'partial_payment'     => __( 'Partial payment', 'woo-wallet' ),
 				'purchase'            => __( 'Purchase', 'woo-wallet' ),
 				'transfer'            => __( 'Transfer', 'woo-wallet' ),
+				'withdrawal'          => __( 'Withdrawal', 'woo-wallet' ),
+				'withdrawal_refund'   => __( 'Withdrawal refund', 'woo-wallet' ),
 				'refund'              => __( 'Refund', 'woo-wallet' ),
 				'adjustment'          => __( 'Adjustment', 'woo-wallet' ),
 				'other'               => __( 'Other', 'woo-wallet' ),

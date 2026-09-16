@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.3
+Stable tag: 1.7.4
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -101,6 +101,9 @@ Ensure the Wallet gateway is enabled in **WooCommerce > Settings > Payments**. A
 = Can customers withdraw their wallet balance to a bank account? =
 Yes, once enabled under Axfit Wallet → Settings → Withdrawal. Customers submit a request from the "Withdraw" tab on their wallet dashboard; the amount is reserved immediately and an admin approves or rejects it under Axfit Wallet → Withdrawals.
 
+= Where is the REST API documentation? =
+See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth, idempotency, conventions), with `API-ME.md`, `API-ADMIN.md`, `API-WITHDRAWALS.md`, `API-SETTINGS.md`, `API-SYSTEM.md` and `API-LEGACY.md` covering each part of the `terawallet/v1` namespace.
+
 == Screenshots ==
 
 1. User wallet dashboard page.
@@ -115,6 +118,9 @@ Yes, once enabled under Axfit Wallet → Settings → Withdrawal. Customers subm
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.4 =
+* New - REST API for wallet withdrawals. Customers: `GET/POST terawallet/v1/me/withdrawals`, `GET terawallet/v1/me/withdrawals/{id}` (own requests only, cookie auth). Admins: `GET/POST terawallet/v1/admin/withdrawals`, `GET .../{id}`, `POST .../{id}/process`, `POST .../{id}/recover`, `POST .../{id}/notes` — the same concurrency-safe, idempotent-refund logic the admin screens use, so there is one implementation regardless of which surface calls it. `GET terawallet/v1/settings/public` now also reports withdrawal limits, charge and the configured bank list.
 
 = v1.7.3 =
 * Fix - Concurrency and money-safety hardening on withdrawal processing: two staff members can no longer both process the same request (mark-paid/reject is now conditioned on an atomic status change, not a plain read-then-write); a database error while recording a new request now credits the reservation straight back instead of leaving it dangling; a failed receipt upload now aborts the action instead of being silently ignored.
