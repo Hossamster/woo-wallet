@@ -678,24 +678,79 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Fetch a page of requests, optionally filtered by status/user.
+		 * Build the shared WHERE clause + bound params for get_requests() /
+		 * count_requests(), so the two can never drift on what a given filter
+		 * set means.
 		 *
-		 * @param array $args {status, user_id, limit, offset}.
-		 * @return array
+		 * @param array $args {
+		 *     @type string       $status      Exact status match.
+		 *     @type int          $user_id     Exact customer id. Wins over $user_ids.
+		 *     @type int[]        $user_ids    Customer ids (e.g. resolved from a name/email search).
+		 *     @type string       $bank_name   Exact bank name match (see get_configured_banks()).
+		 *     @type string       $created_by  'self' (customer self-service) or 'staff' (admin-logged).
+		 *     @type string       $after       'Y-m-d H:i:s' lower bound on date_created.
+		 *     @type string       $before      'Y-m-d H:i:s' upper bound on date_created.
+		 * }
+		 * @return array {0: string[] where clauses (already includes the leading '1=1'), 1: array bound params}
 		 */
-		public static function get_requests( array $args = array() ) {
-			global $wpdb;
+		private static function build_where( array $args ) {
 			$where  = array( '1=1' );
 			$params = array();
 
 			if ( ! empty( $args['status'] ) ) {
 				$where[]  = 'status = %s';
-				$params[] = $args['status'];
+				$params[] = (string) $args['status'];
 			}
 			if ( ! empty( $args['user_id'] ) ) {
 				$where[]  = 'user_id = %d';
 				$params[] = (int) $args['user_id'];
+			} elseif ( ! empty( $args['user_ids'] ) && is_array( $args['user_ids'] ) ) {
+				$ids = array_filter( array_map( 'absint', $args['user_ids'] ) );
+				if ( $ids ) {
+					$placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+					$where[]      = "user_id IN ({$placeholders})";
+					foreach ( $ids as $id ) {
+						$params[] = $id;
+					}
+				} else {
+					// A search that resolved to zero customers must match zero
+					// rows, not "no user filter at all".
+					$where[] = '1=0';
+				}
 			}
+			if ( ! empty( $args['bank_name'] ) ) {
+				$where[]  = 'bank_name = %s';
+				$params[] = (string) $args['bank_name'];
+			}
+			if ( ! empty( $args['created_by'] ) ) {
+				if ( 'self' === $args['created_by'] ) {
+					$where[] = 'created_by > 0 AND created_by = user_id';
+				} elseif ( 'staff' === $args['created_by'] ) {
+					$where[] = 'created_by > 0 AND created_by <> user_id';
+				}
+			}
+			if ( ! empty( $args['after'] ) ) {
+				$where[]  = 'date_created >= %s';
+				$params[] = (string) $args['after'];
+			}
+			if ( ! empty( $args['before'] ) ) {
+				$where[]  = 'date_created <= %s';
+				$params[] = (string) $args['before'];
+			}
+
+			return array( $where, $params );
+		}
+
+		/**
+		 * Fetch a page of requests. See build_where() for the supported filters;
+		 * `limit`/`offset` are additionally supported for pagination.
+		 *
+		 * @param array $args Filters plus optional {limit, offset}.
+		 * @return array
+		 */
+		public static function get_requests( array $args = array() ) {
+			global $wpdb;
+			list( $where, $params ) = self::build_where( $args );
 
 			$sql = 'SELECT * FROM ' . self::table() . ' WHERE ' . implode( ' AND ', $where ) . ' ORDER BY id DESC';
 			if ( ! empty( $args['limit'] ) ) {
@@ -711,24 +766,14 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Count requests, optionally filtered by status/user — same filter shape as get_requests().
+		 * Count requests — same filter shape as get_requests(), see build_where().
 		 *
-		 * @param array $args {status, user_id}.
+		 * @param array $args Filters.
 		 * @return int
 		 */
 		public static function count_requests( array $args = array() ) {
 			global $wpdb;
-			$where  = array( '1=1' );
-			$params = array();
-
-			if ( ! empty( $args['status'] ) ) {
-				$where[]  = 'status = %s';
-				$params[] = $args['status'];
-			}
-			if ( ! empty( $args['user_id'] ) ) {
-				$where[]  = 'user_id = %d';
-				$params[] = (int) $args['user_id'];
-			}
+			list( $where, $params ) = self::build_where( $args );
 
 			$sql = 'SELECT COUNT(*) FROM ' . self::table() . ' WHERE ' . implode( ' AND ', $where );
 			if ( $params ) {
@@ -1075,7 +1120,15 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 						</tr>
 						<tr>
 							<th><label for="ww-bank"><?php esc_html_e( 'Bank', 'woo-wallet' ); ?></label></th>
-							<td><input type="text" id="ww-bank" name="bank_name" class="regular-text" required /></td>
+							<td>
+								<select id="ww-bank" name="bank_name" class="regular-text">
+									<option value=""><?php esc_html_e( '— Other (type below) —', 'woo-wallet' ); ?></option>
+									<?php foreach ( Woo_Wallet_Withdrawal::get_configured_banks() as $ww_bank_value => $ww_bank_label ) : ?>
+										<option value="<?php echo esc_attr( $ww_bank_value ); ?>"><?php echo esc_html( $ww_bank_label ); ?></option>
+									<?php endforeach; ?>
+								</select>
+								<input type="text" id="ww-bank-other" name="bank_name_other" class="regular-text" placeholder="<?php esc_attr_e( 'Only used when "Other" is selected above', 'woo-wallet' ); ?>" style="margin-top:4px;" />
+							</td>
 						</tr>
 						<tr>
 							<th><label for="ww-beneficiary"><?php esc_html_e( 'Beneficiary Name', 'woo-wallet' ); ?></label></th>
@@ -1346,7 +1399,13 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 
 			$target_user_id  = isset( $_POST['user_id'] ) ? absint( $_POST['user_id'] ) : 0;
 			$amount          = isset( $_POST['amount'] ) ? (float) sanitize_text_field( wp_unslash( $_POST['amount'] ) ) : 0;
+			// The form offers a dropdown of configured banks plus a free-text
+			// fallback (`bank_name_other`) for a bank that isn't on the list —
+			// the dropdown wins when a real option was picked.
 			$bank_name       = isset( $_POST['bank_name'] ) ? sanitize_text_field( wp_unslash( $_POST['bank_name'] ) ) : '';
+			if ( '' === $bank_name && isset( $_POST['bank_name_other'] ) ) {
+				$bank_name = sanitize_text_field( wp_unslash( $_POST['bank_name_other'] ) );
+			}
 			$beneficiary     = isset( $_POST['beneficiary_name'] ) ? sanitize_text_field( wp_unslash( $_POST['beneficiary_name'] ) ) : '';
 			$account_number  = isset( $_POST['account_number'] ) ? preg_replace( '/\s+/', '', sanitize_text_field( wp_unslash( $_POST['account_number'] ) ) ) : '';
 			$iban            = isset( $_POST['iban'] ) ? strtoupper( preg_replace( '/\s+/', '', sanitize_text_field( wp_unslash( $_POST['iban'] ) ) ) ) : '';

@@ -93,6 +93,9 @@ $ww_retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
 					<th scope="col"><?php esc_html_e( 'Date', 'woo-wallet' ); ?></th>
 					<th scope="col" class="ww-stmt-num"><?php esc_html_e( 'Amount', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Bank', 'woo-wallet' ); ?></th>
+					<th scope="col"><?php esc_html_e( 'Beneficiary Name', 'woo-wallet' ); ?></th>
+					<th scope="col"><?php esc_html_e( 'Account Number', 'woo-wallet' ); ?></th>
+					<th scope="col"><?php esc_html_e( 'IBAN', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Reference', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Receipt', 'woo-wallet' ); ?></th>
 					<th scope="col"><?php esc_html_e( 'Status', 'woo-wallet' ); ?></th>
@@ -108,6 +111,9 @@ $ww_retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
 						<td data-label="<?php esc_attr_e( 'Date', 'woo-wallet' ); ?>"><?php echo esc_html( wc_string_to_datetime( $ww_row->date_created )->date_i18n( wc_date_format() ) ); ?></td>
 						<td class="ww-stmt-num" data-label="<?php esc_attr_e( 'Amount', 'woo-wallet' ); ?>"><?php echo wp_kses_post( wc_price( (float) $ww_row->amount, array( 'currency' => $ww_row->currency ? $ww_row->currency : get_option( 'woocommerce_currency' ) ) ) ); ?></td>
 						<td data-label="<?php esc_attr_e( 'Bank', 'woo-wallet' ); ?>"><?php echo esc_html( $ww_row->bank_name ); ?></td>
+						<td data-label="<?php esc_attr_e( 'Beneficiary Name', 'woo-wallet' ); ?>"><?php echo esc_html( $ww_row->beneficiary_name ); ?></td>
+						<td data-label="<?php esc_attr_e( 'Account Number', 'woo-wallet' ); ?>"><?php echo esc_html( $ww_row->account_number ); ?></td>
+						<td data-label="<?php esc_attr_e( 'IBAN', 'woo-wallet' ); ?>"><?php echo $ww_row->iban ? esc_html( $ww_row->iban ) : '&ndash;'; ?></td>
 						<td data-label="<?php esc_attr_e( 'Reference', 'woo-wallet' ); ?>"><?php echo $ww_row->reference_no ? esc_html( $ww_row->reference_no ) : '&ndash;'; ?></td>
 						<td data-label="<?php esc_attr_e( 'Receipt', 'woo-wallet' ); ?>">
 							<?php if ( $ww_receipt_url ) : ?>
@@ -129,18 +135,18 @@ $ww_retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
 	</div>
 	<?php if ( $ww_retention_days > 0 ) : ?>
 		<p class="ww-stmt-note" style="margin-top:8px;">
-			<small>
+			<small style="color: #d00; font-weight: 700;">
 				<?php
 				if ( 0 === $ww_retention_days % 30 ) {
 					printf(
 						/* translators: %d: number of months */
-						esc_html( _n( 'Receipts are automatically removed %d month after the request date to save storage. If you need a copy after that, please contact us before it is removed.', 'Receipts are automatically removed %d months after the request date to save storage. If you need a copy after that, please contact us before it is removed.', (int) ( $ww_retention_days / 30 ), 'woo-wallet' ) ),
+						esc_html( _n( 'Receipts are automatically removed %d month after the request date to save storage. If you need a copy after that, please contact us.', 'Receipts are automatically removed %d months after the request date to save storage. If you need a copy after that, please contact us.', (int) ( $ww_retention_days / 30 ), 'woo-wallet' ) ),
 						(int) ( $ww_retention_days / 30 )
 					);
 				} else {
 					printf(
 						/* translators: %d: number of days */
-						esc_html( _n( 'Receipts are automatically removed %d day after the request date to save storage. If you need a copy after that, please contact us before it is removed.', 'Receipts are automatically removed %d days after the request date to save storage. If you need a copy after that, please contact us before it is removed.', $ww_retention_days, 'woo-wallet' ) ),
+						esc_html( _n( 'Receipts are automatically removed %d day after the request date to save storage. If you need a copy after that, please contact us.', 'Receipts are automatically removed %d days after the request date to save storage. If you need a copy after that, please contact us.', $ww_retention_days, 'woo-wallet' ) ),
 						$ww_retention_days
 					);
 				}

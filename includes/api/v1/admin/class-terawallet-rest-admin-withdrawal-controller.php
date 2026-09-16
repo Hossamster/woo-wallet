@@ -172,11 +172,15 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 		 */
 		public function get_collection_params() {
 			return array(
-				'page'     => array( 'type' => 'integer', 'default' => 1, 'minimum' => 1, 'sanitize_callback' => 'absint' ),
-				'per_page' => array( 'type' => 'integer', 'default' => 20, 'minimum' => 1, 'maximum' => 100, 'sanitize_callback' => 'absint' ),
-				'status'   => array( 'type' => 'string', 'enum' => array( 'pending', 'processing', 'paid', 'rejected' ) ),
-				'user_id'  => array( 'type' => 'integer', 'sanitize_callback' => 'absint' ),
-				'search'   => array( 'type' => 'string', 'description' => __( 'Match a customer by login, email or display name.', 'woo-wallet' ), 'sanitize_callback' => 'sanitize_text_field' ),
+				'page'          => array( 'type' => 'integer', 'default' => 1, 'minimum' => 1, 'sanitize_callback' => 'absint' ),
+				'per_page'      => array( 'type' => 'integer', 'default' => 20, 'minimum' => 1, 'maximum' => 100, 'sanitize_callback' => 'absint' ),
+				'status'        => array( 'type' => 'string', 'enum' => array( 'pending', 'processing', 'paid', 'rejected' ) ),
+				'user_id'       => array( 'type' => 'integer', 'sanitize_callback' => 'absint' ),
+				'search'        => array( 'type' => 'string', 'description' => __( 'Match a customer by login, email or display name. Ignored when user_id is given; may match more than one customer.', 'woo-wallet' ), 'sanitize_callback' => 'sanitize_text_field' ),
+				'bank_name'     => array( 'type' => 'string', 'description' => __( 'Exact match against one of the configured bank names.', 'woo-wallet' ), 'sanitize_callback' => 'sanitize_text_field' ),
+				'requested_by'  => array( 'type' => 'string', 'enum' => array( 'self', 'staff' ), 'description' => __( 'self = customer self-service requests only, staff = manually logged by an admin only.', 'woo-wallet' ) ),
+				'after'         => array( 'type' => 'string', 'format' => 'date-time', 'description' => __( 'Lower bound on the request date.', 'woo-wallet' ) ),
+				'before'        => array( 'type' => 'string', 'format' => 'date-time', 'description' => __( 'Upper bound on the request date.', 'woo-wallet' ) ),
 			);
 		}
 
@@ -255,10 +259,22 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 					$response = new WP_REST_Response( array(), 200 );
 					return $this->add_pagination_headers( $response, 0, 1, (int) $request->get_param( 'per_page' ) );
 				}
-				// Woo_Wallet_Withdrawal::get_requests() only filters on a single
-				// user_id, not an array — narrow to the first match rather than
-				// silently ignoring the rest of a multi-hit search.
-				$args['user_id'] = $user_ids[0];
+				// A plain-text search can legitimately match more than one
+				// customer (e.g. two "Mohamed Ali"s) — every match is included
+				// rather than silently narrowing to the first one.
+				$args['user_ids'] = $user_ids;
+			}
+			if ( $request->get_param( 'bank_name' ) ) {
+				$args['bank_name'] = (string) $request->get_param( 'bank_name' );
+			}
+			if ( $request->get_param( 'requested_by' ) ) {
+				$args['created_by'] = (string) $request->get_param( 'requested_by' );
+			}
+			if ( $request->get_param( 'after' ) ) {
+				$args['after'] = gmdate( 'Y-m-d H:i:s', strtotime( (string) $request->get_param( 'after' ) ) );
+			}
+			if ( $request->get_param( 'before' ) ) {
+				$args['before'] = gmdate( 'Y-m-d H:i:s', strtotime( (string) $request->get_param( 'before' ) ) );
 			}
 
 			$page     = max( 1, (int) $request->get_param( 'page' ) );

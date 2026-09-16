@@ -217,8 +217,11 @@ List/filter every customer's requests.
 |---|---|
 | `page`, `per_page` | Default 1 / 20, max 100 |
 | `status` | `pending` \| `processing` \| `paid` \| `rejected` |
-| `user_id` | Exact customer id |
-| `search` | Match a customer by login, email or display name (takes the first match; use `user_id` for an exact target) |
+| `user_id` | Exact customer id — wins over `search` if both are given |
+| `search` | Match a customer by login, email or display name — a plain-text name match can hit more than one customer, and every match is included (not just the first) |
+| `bank_name` | Exact match against one of the configured bank names (see `settings/public`'s `withdrawal.banks`) |
+| `requested_by` | `self` (customer self-service only) \| `staff` (manually logged by an admin only) — omit for both |
+| `after`, `before` | ISO 8601 date-time bounds on the request date |
 
 ### `POST /admin/withdrawals`
 

@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.5
+Stable tag: 1.7.6
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,11 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.6 =
+* New - Richer filters on the Axfit Wallet → Withdrawals admin screen: search by customer, filter by bank, by "self-service vs staff-logged", and by a date range, alongside the existing status filter. The same filters are now available on `GET terawallet/v1/admin/withdrawals` (`bank_name`, `requested_by`, `after`, `before`) — a customer-name search there also returns every match instead of only the first.
+* New - The "Create Withdrawal" admin form's Bank field is now a dropdown of the configured banks, with an "Other" fallback to type one manually.
+* New - The customer's "Your Withdrawal Requests" table now also shows the beneficiary name, account number and IBAN that were submitted with each request.
 
 = v1.7.5 =
 * New - Uploaded withdrawal receipts are now shown to the customer too (a "Receipt" column on the "Your Withdrawal Requests" table, with a link) — previously only visible to admins.
