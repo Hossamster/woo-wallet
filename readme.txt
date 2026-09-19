@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.8
+Stable tag: 1.7.9
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,9 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.9 =
+* New - Self-hosted plugin updates: sites now see "Update available" in wp-admin and can one-click update, backed by this GitHub repo's Releases instead of wordpress.org. A regular commit/push never triggers an update on any installed site — only a deliberately published GitHub Release does. See `docs/RELEASING.md` for the release process, and `includes/woo-wallet-update-checker.php` for the implementation (uses the bundled Plugin Update Checker library).
 
 = v1.7.8 =
 * Fix - The legacy 1.0.8–1.3.21 database upgrade routines (`woo_wallet_update_108_db_column` through `_1312_`) built their `SHOW COLUMNS`/`ALTER TABLE` queries incorrectly (`` `%s` `` inside a `$wpdb->prepare()` call quotes the table name as a string, not a backtick-quoted identifier), which would fail with a SQL syntax error on a real upgrade from a pre-1.0.8 install. Silent on any install already past that version, since dbDelta's current schema already has every column these add — found and fixed while adding automated test coverage for the plugin's database migrations.

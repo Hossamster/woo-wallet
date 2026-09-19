@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Axfit Wallet
  * Description: Digital wallet for WooCommerce with partial payment, refunds, cashbacks, transfers and bank withdrawals.
- * Version: 1.7.8
+ * Version: 1.7.9
  * Requires Plugins: woocommerce
  * Author: Axfit
  * Text Domain: woo-wallet
@@ -32,7 +32,7 @@ if ( ! defined( 'WOO_WALLET_ABSPATH' ) ) {
 
 // Define WOO_WALLET_PLUGIN_VERSION.
 if ( ! defined( 'WOO_WALLET_PLUGIN_VERSION' ) ) {
-	define( 'WOO_WALLET_PLUGIN_VERSION', '1.7.8' );
+	define( 'WOO_WALLET_PLUGIN_VERSION', '1.7.9' );
 }
 
 // Declare HPOS (custom order tables) compatibility.
@@ -48,6 +48,11 @@ add_action(
 // include dependencies file.
 if ( ! class_exists( 'Woo_Wallet_Dependencies' ) ) {
 	include_once __DIR__ . '/includes/class-woo-wallet-dependencies.php';
+}
+
+// Self-hosted update checker (GitHub Releases/Tags — never on a plain push).
+if ( ! function_exists( 'woo_wallet_init_update_checker' ) ) {
+	include_once __DIR__ . '/includes/woo-wallet-update-checker.php';
 }
 
 // Include the main class.
