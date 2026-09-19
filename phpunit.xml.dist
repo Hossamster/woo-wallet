@@ -9,6 +9,12 @@
 		<testsuite name="withdrawal-core">
 			<directory suffix="Test.php">./tests/phpunit/withdrawal</directory>
 		</testsuite>
+		<testsuite name="transfer-core">
+			<directory suffix="Test.php">./tests/phpunit/transfer</directory>
+		</testsuite>
+		<testsuite name="cashback-core">
+			<directory suffix="Test.php">./tests/phpunit/cashback</directory>
+		</testsuite>
 		<testsuite name="rest-api">
 			<directory suffix="Test.php">./tests/phpunit/rest</directory>
 		</testsuite>
