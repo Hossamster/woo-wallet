@@ -131,6 +131,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			if ( is_admin() ) {
 				add_action( 'admin_menu', array( $this, 'admin_menu' ), 70 );
 				add_action( 'admin_enqueue_scripts', array( $this, 'admin_enqueue_scripts' ) );
+				add_action( 'admin_init', array( $this, 'maybe_handle_admin_csv_export' ) );
 				add_action( 'admin_post_woo_wallet_withdrawal_process', array( $this, 'handle_admin_process_request' ) );
 				add_action( 'admin_post_woo_wallet_withdrawal_create', array( $this, 'handle_admin_create_request' ) );
 				add_action( 'admin_post_woo_wallet_withdrawal_add_note', array( $this, 'handle_admin_add_note' ) );
@@ -696,17 +697,23 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * set means.
 		 *
 		 * @param array $args {
-		 *     @type string       $status      Exact status match.
-		 *     @type int          $user_id     Exact customer id. Wins over $user_ids.
-		 *     @type int[]        $user_ids    Customer ids (e.g. resolved from a name/email search).
-		 *     @type string       $bank_name   Exact bank name match (see get_configured_banks()).
-		 *     @type string       $created_by  'self' (customer self-service) or 'staff' (admin-logged).
-		 *     @type string       $after       'Y-m-d H:i:s' lower bound on date_created.
-		 *     @type string       $before      'Y-m-d H:i:s' upper bound on date_created.
+		 *     @type string       $status       Exact status match.
+		 *     @type int          $user_id      Exact customer id. Wins over $user_ids.
+		 *     @type int[]        $user_ids     Customer ids (e.g. resolved from a name/email search).
+		 *     @type string       $search       Universal search against customer & bank details.
+		 *     @type string       $bank_name    Exact bank name match (see get_configured_banks()).
+		 *     @type string       $created_by   'self' (customer self-service) or 'staff' (admin-logged).
+		 *     @type int          $processed_by Staff member who processed the request.
+		 *     @type string       $receipt      'has' (receipt_id > 0) or 'missing' (no receipt).
+		 *     @type float        $min_amount   Minimum requested amount.
+		 *     @type float        $max_amount   Maximum requested amount.
+		 *     @type string       $after        'Y-m-d H:i:s' lower bound on date_created.
+		 *     @type string       $before       'Y-m-d H:i:s' upper bound on date_created.
 		 * }
 		 * @return array {0: string[] where clauses (already includes the leading '1=1'), 1: array bound params}
 		 */
 		private static function build_where( array $args ) {
+			global $wpdb;
 			$where  = array( '1=1' );
 			$params = array();
 
@@ -731,6 +738,37 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					$where[] = '1=0';
 				}
 			}
+
+			if ( ! empty( $args['search'] ) ) {
+				$search_term  = trim( (string) $args['search'] );
+				$search_parts = array();
+				$matched_uids = array();
+
+				if ( class_exists( 'Woo_Wallet_Withdrawal_Report' ) && method_exists( 'Woo_Wallet_Withdrawal_Report', 'resolve_customers' ) ) {
+					$matched_uids = Woo_Wallet_Withdrawal_Report::resolve_customers( $search_term );
+				}
+
+				if ( ! empty( $matched_uids ) ) {
+					$u_placeholders = implode( ',', array_fill( 0, count( $matched_uids ), '%d' ) );
+					$search_parts[] = "user_id IN ({$u_placeholders})";
+					foreach ( $matched_uids as $uid ) {
+						$params[] = $uid;
+					}
+				}
+
+				$search_like    = '%' . $wpdb->esc_like( $search_term ) . '%';
+				$search_parts[] = 'account_number LIKE %s';
+				$params[]       = $search_like;
+				$search_parts[] = 'iban LIKE %s';
+				$params[]       = $search_like;
+				$search_parts[] = 'reference_no LIKE %s';
+				$params[]       = $search_like;
+				$search_parts[] = 'beneficiary_name LIKE %s';
+				$params[]       = $search_like;
+
+				$where[] = '(' . implode( ' OR ', $search_parts ) . ')';
+			}
+
 			if ( ! empty( $args['bank_name'] ) ) {
 				$where[]  = 'bank_name = %s';
 				$params[] = (string) $args['bank_name'];
@@ -741,6 +779,25 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				} elseif ( 'staff' === $args['created_by'] ) {
 					$where[] = 'created_by > 0 AND created_by <> user_id';
 				}
+			}
+			if ( ! empty( $args['processed_by'] ) ) {
+				$where[]  = 'processed_by = %d';
+				$params[] = (int) $args['processed_by'];
+			}
+			if ( ! empty( $args['receipt'] ) ) {
+				if ( 'has' === $args['receipt'] ) {
+					$where[] = 'receipt_id > 0';
+				} elseif ( 'missing' === $args['receipt'] ) {
+					$where[] = '(receipt_id IS NULL OR receipt_id = 0)';
+				}
+			}
+			if ( isset( $args['min_amount'] ) && is_numeric( $args['min_amount'] ) ) {
+				$where[]  = 'amount >= %f';
+				$params[] = (float) $args['min_amount'];
+			}
+			if ( isset( $args['max_amount'] ) && is_numeric( $args['max_amount'] ) ) {
+				$where[]  = 'amount <= %f';
+				$params[] = (float) $args['max_amount'];
 			}
 			if ( ! empty( $args['after'] ) ) {
 				$where[]  = 'date_created >= %s';
@@ -793,6 +850,180 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				return (int) $wpdb->get_var( $wpdb->prepare( $sql, $params ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 			}
 			return (int) $wpdb->get_var( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+		}
+
+		/**
+		 * Fetch request counts grouped by status in a single query.
+		 *
+		 * @return array<string, int> Status => count map.
+		 */
+		public static function count_requests_by_status() {
+			global $wpdb;
+			$results = $wpdb->get_results( 'SELECT status, COUNT(*) as count FROM ' . self::table() . ' GROUP BY status' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+			$counts  = array(
+				'all'        => 0,
+				'pending'    => 0,
+				'processing' => 0,
+				'paid'       => 0,
+				'rejected'   => 0,
+			);
+			if ( $results ) {
+				foreach ( $results as $row ) {
+					if ( isset( $counts[ $row->status ] ) ) {
+						$counts[ $row->status ] = (int) $row->count;
+					}
+					$counts['all'] += (int) $row->count;
+				}
+			}
+			return $counts;
+		}
+
+		/**
+		 * Fetch distinct staff members who have processed withdrawal requests.
+		 *
+		 * @return array<int, string> User ID => Display Name map.
+		 */
+		public static function get_processing_staff() {
+			global $wpdb;
+			$staff_ids = $wpdb->get_col( 'SELECT DISTINCT processed_by FROM ' . self::table() . ' WHERE processed_by > 0 ORDER BY processed_by ASC' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+			$staff = array();
+			if ( $staff_ids ) {
+				foreach ( $staff_ids as $id ) {
+					$user = get_userdata( (int) $id );
+					if ( $user ) {
+						$staff[ (int) $id ] = $user->display_name ? $user->display_name : $user->user_login;
+					} else {
+						$staff[ (int) $id ] = '#' . (int) $id;
+					}
+				}
+			}
+			return $staff;
+		}
+
+		/**
+		 * Handle admin CSV export request.
+		 */
+		public function maybe_handle_admin_csv_export() {
+			if ( ! is_admin() || ! isset( $_GET['page'] ) || 'woo-wallet-withdrawals' !== $_GET['page'] ) {
+				return;
+			}
+			if ( empty( $_GET['export_action'] ) ) {
+				return;
+			}
+			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+				wp_die( esc_html__( 'You do not have permission to export this data.', 'woo-wallet' ) );
+			}
+			self::export_csv();
+		}
+
+		/**
+		 * Export filtered withdrawal requests to CSV with UTF-8 BOM for Arabic support.
+		 */
+		public static function export_csv() {
+			if ( ! class_exists( 'Woo_Wallet_Withdrawal_Report' ) ) {
+				include_once WOO_WALLET_ABSPATH . 'includes/admin/class-woo-wallet-withdrawal-report.php';
+			}
+
+			$filter_args = Woo_Wallet_Withdrawal_Report::get_filter_args();
+			if ( false === $filter_args ) {
+				$rows = array();
+			} else {
+				$rows = self::get_requests( $filter_args );
+			}
+
+			$filename = sprintf( 'wallet-withdrawals-%s.csv', current_time( 'Y-m-d-His' ) );
+
+			if ( function_exists( 'wc_nocache_headers' ) ) {
+				wc_nocache_headers();
+			} else {
+				nocache_headers();
+			}
+
+			header( 'Content-Type: text/csv; charset=UTF-8' );
+			header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+			header( 'Pragma: no-cache' );
+			header( 'Expires: 0' );
+
+			$output = fopen( 'php://output', 'w' );
+
+			// Output UTF-8 BOM for Microsoft Excel Arabic compatibility
+			fputs( $output, "\xEF\xBB\xBF" );
+
+			// CSV Column Headers
+			fputcsv(
+				$output,
+				array(
+					__( 'ID', 'woo-wallet' ),
+					__( 'Date Requested', 'woo-wallet' ),
+					__( 'Customer ID', 'woo-wallet' ),
+					__( 'Customer Email', 'woo-wallet' ),
+					__( 'Customer Name', 'woo-wallet' ),
+					__( 'Amount', 'woo-wallet' ),
+					__( 'Charge', 'woo-wallet' ),
+					__( 'Total Debited', 'woo-wallet' ),
+					__( 'Currency', 'woo-wallet' ),
+					__( 'Bank Name', 'woo-wallet' ),
+					__( 'Beneficiary Name', 'woo-wallet' ),
+					__( 'Account Number', 'woo-wallet' ),
+					__( 'IBAN', 'woo-wallet' ),
+					__( 'Reference No', 'woo-wallet' ),
+					__( 'Status', 'woo-wallet' ),
+					__( 'Has Receipt', 'woo-wallet' ),
+					__( 'Requested By', 'woo-wallet' ),
+					__( 'Processed By', 'woo-wallet' ),
+					__( 'Date Updated', 'woo-wallet' ),
+				)
+			);
+
+			foreach ( $rows as $row ) {
+				$customer   = get_userdata( $row->user_id );
+				$cust_email = $customer ? $customer->user_email : '';
+				$cust_name  = $customer ? $customer->display_name : '';
+
+				$created_by_str = '';
+				if ( (int) $row->created_by === (int) $row->user_id ) {
+					$created_by_str = __( 'Self-service (Customer)', 'woo-wallet' );
+				} elseif ( (int) $row->created_by > 0 ) {
+					$staff          = get_userdata( (int) $row->created_by );
+					$created_by_str = $staff ? $staff->display_name : '#' . (int) $row->created_by;
+				}
+
+				$processed_by_str = '';
+				if ( (int) $row->processed_by > 0 ) {
+					$staff            = get_userdata( (int) $row->processed_by );
+					$processed_by_str = $staff ? $staff->display_name : '#' . (int) $row->processed_by;
+				}
+
+				$has_receipt_str = ( ! empty( $row->receipt_id ) && (int) $row->receipt_id > 0 ) ? __( 'Yes', 'woo-wallet' ) : __( 'No', 'woo-wallet' );
+
+				fputcsv(
+					$output,
+					array(
+						(int) $row->id,
+						$row->date_created,
+						(int) $row->user_id,
+						$cust_email,
+						$cust_name,
+						number_format( (float) $row->amount, 2, '.', '' ),
+						number_format( (float) $row->charge, 2, '.', '' ),
+						number_format( (float) $row->amount + (float) $row->charge, 2, '.', '' ),
+						$row->currency,
+						$row->bank_name,
+						$row->beneficiary_name,
+						"'" . $row->account_number,
+						$row->iban ? "'" . $row->iban : '',
+						$row->reference_no,
+						ucfirst( $row->status ),
+						$has_receipt_str,
+						$created_by_str,
+						$processed_by_str,
+						$row->date_updated ? $row->date_updated : '',
+					)
+				);
+			}
+
+			fclose( $output );
+			exit();
 		}
 
 		/**
@@ -1101,6 +1332,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				 * are now plain links (the detail screen owns every POST
 				 * form), so nothing here needs an enclosing form.
 				 */
+				$table->views();
 				$table->display();
 				?>
 			</div>
