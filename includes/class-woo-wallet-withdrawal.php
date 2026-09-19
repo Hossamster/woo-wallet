@@ -757,6 +757,8 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				}
 
 				$search_like    = '%' . $wpdb->esc_like( $search_term ) . '%';
+				$search_parts[] = 'phone LIKE %s';
+				$params[]       = $search_like;
 				$search_parts[] = 'account_number LIKE %s';
 				$params[]       = $search_like;
 				$search_parts[] = 'iban LIKE %s';
@@ -958,6 +960,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					__( 'Customer ID', 'woo-wallet' ),
 					__( 'Customer Email', 'woo-wallet' ),
 					__( 'Customer Name', 'woo-wallet' ),
+					__( 'Phone', 'woo-wallet' ),
 					__( 'Amount', 'woo-wallet' ),
 					__( 'Charge', 'woo-wallet' ),
 					__( 'Total Debited', 'woo-wallet' ),
@@ -1004,6 +1007,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 						(int) $row->user_id,
 						$cust_email,
 						$cust_name,
+						$row->phone ? "'" . $row->phone : '',
 						number_format( (float) $row->amount, 2, '.', '' ),
 						number_format( (float) $row->charge, 2, '.', '' ),
 						number_format( (float) $row->amount + (float) $row->charge, 2, '.', '' ),

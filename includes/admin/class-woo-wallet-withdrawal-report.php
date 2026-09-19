@@ -312,7 +312,11 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 
 			case 'customer':
 				$user = get_userdata( $item->user_id );
-				return $user ? esc_html( $user->user_email ) : '#' . (int) $item->user_id;
+				$out  = $user ? esc_html( $user->user_email ) : '#' . (int) $item->user_id;
+				if ( ! empty( $item->phone ) ) {
+					$out .= '<br /><span class="description" style="color:#50575e;font-size:12px;"><span class="dashicons dashicons-phone" style="font-size:13px;width:13px;height:13px;vertical-align:middle;"></span> ' . esc_html( $item->phone ) . '</span>';
+				}
+				return $out;
 
 			case 'amount':
 				$net    = wc_price( (float) $item->amount, array( 'currency' => $item->currency ? $item->currency : get_option( 'woocommerce_currency' ) ) );
@@ -410,7 +414,7 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 				<?php if ( ! empty( $status ) ) : ?>
 					<input type="hidden" name="withdrawal_status" value="<?php echo esc_attr( $status ); ?>" />
 				<?php endif; ?>
-				<input type="search" name="withdrawal_search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Customer, account #, IBAN, ref, name...', 'woo-wallet' ); ?>" style="width: 220px;" />
+				<input type="search" name="withdrawal_search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Customer, phone, account #, IBAN, ref...', 'woo-wallet' ); ?>" style="width: 240px;" />
 				<select name="withdrawal_bank">
 					<option value=""><?php esc_html_e( 'All banks', 'woo-wallet' ); ?></option>
 					<?php foreach ( Woo_Wallet_Withdrawal::get_configured_banks() as $bank_value => $bank_label ) : ?>
