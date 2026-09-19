@@ -1,0 +1,5 @@
+/vendor/
+/node_modules/
+/tests/wp-content/
+.DS_Store
+.phpunit.result.cache

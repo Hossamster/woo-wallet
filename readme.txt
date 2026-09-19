@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.7
+Stable tag: 1.7.8
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,9 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.8 =
+* Fix - The legacy 1.0.8–1.3.21 database upgrade routines (`woo_wallet_update_108_db_column` through `_1312_`) built their `SHOW COLUMNS`/`ALTER TABLE` queries incorrectly (`` `%s` `` inside a `$wpdb->prepare()` call quotes the table name as a string, not a backtick-quoted identifier), which would fail with a SQL syntax error on a real upgrade from a pre-1.0.8 install. Silent on any install already past that version, since dbDelta's current schema already has every column these add — found and fixed while adding automated test coverage for the plugin's database migrations.
 
 = v1.7.7 =
 * New - Withdrawal requests now capture a contact phone number, so staff can reach the customer if needed. Shown on the customer-facing form and history table, the admin "Create Withdrawal" form, the request detail page, and the admin Withdrawals list — and available via the REST API (`phone` field on both `me` and `admin` withdrawal endpoints).

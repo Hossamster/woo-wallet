@@ -1,0 +1,38 @@
+{
+	"name": "axfit/woo-wallet",
+	"description": "Axfit Wallet — digital wallet for WooCommerce (dev/test tooling).",
+	"type": "wordpress-plugin",
+	"license": "GPL-3.0-or-later",
+	"require": {
+		"php": ">=7.4"
+	},
+	"require-dev": {
+		"composer/installers": "^2.0",
+		"phpunit/phpunit": "^9.6",
+		"yoast/phpunit-polyfills": "^2.0",
+		"wp-phpunit/wp-phpunit": "^6.5",
+		"roots/wordpress-no-content": "^6.5",
+		"wpackagist-plugin/woocommerce": "*"
+	},
+	"repositories": [
+		{
+			"type": "composer",
+			"url": "https://wpackagist.org"
+		}
+	],
+	"config": {
+		"allow-plugins": {
+			"composer/installers": true
+		}
+	},
+	"extra": {
+		"installer-paths": {
+			"tests/wp-content/plugins/{$name}/": [
+				"type:wordpress-plugin"
+			]
+		}
+	},
+	"scripts": {
+		"test": "phpunit"
+	}
+}

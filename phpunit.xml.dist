@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+	bootstrap="tests/bootstrap.php"
+	colors="true"
+	beStrictAboutOutputDuringTests="true"
+	convertDeprecationsToExceptions="false"
+>
+	<testsuites>
+		<testsuite name="withdrawal-core">
+			<directory suffix="Test.php">./tests/phpunit/withdrawal</directory>
+		</testsuite>
+		<testsuite name="rest-api">
+			<directory suffix="Test.php">./tests/phpunit/rest</directory>
+		</testsuite>
+		<testsuite name="admin">
+			<directory suffix="Test.php">./tests/phpunit/admin</directory>
+		</testsuite>
+	</testsuites>
+</phpunit>
