@@ -62,6 +62,17 @@ if ( ! class_exists( 'Woo_Wallet_Cashback' ) ) {
 		/**
 		 * Calculate wallet cashback.
 		 *
+		 * This is a pure calculation — it never writes to the wallet ledger
+		 * and has no idempotency guard of its own. The only place that
+		 * credits the amount this returns is Woo_Wallet_Wallet::wallet_cashback(),
+		 * which is what actually protects against double-crediting the same
+		 * order (via a per-order GET_LOCK plus a marker meta re-checked
+		 * inside that lock). Calling calculate_cashback() directly from new
+		 * code and crediting its result yourself bypasses that protection —
+		 * route any new cashback-crediting flow through wallet_cashback()
+		 * (or execute_cashback_clawback() for reversals) instead of calling
+		 * the wallet credit API directly.
+		 *
 		 * @param bool $form_cart form_cart.
 		 * @param int  $order_id order_id.
 		 * @param bool $force force.
