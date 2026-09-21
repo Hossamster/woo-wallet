@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.10
+Stable tag: 1.7.11
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -119,6 +119,11 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 
 == Changelog ==
 
+= v1.7.11 =
+* Security - Rate-limited the wallet-transfer recipient lookup (`woo_wallet_user_search`): with the default exact-email-match mode, any logged-in customer could probe arbitrary email addresses with no throttling at all and learn whether each one is registered on the site (plus the matching username) — a low-severity enumeration oracle, now rate-limited the same way withdrawals/transfers already are.
+* Security - Added a missing nonce check on the partial-payment checkout checkbox AJAX action (`woo_wallet_partial_payment_update_session`). Low impact on its own (it only writes a same-user session preference, never moves money — the actual amount is re-validated under lock at checkout), but cheap to close.
+* Note - v1.7.10's CSRF fix (below) was committed after that version's GitHub Release had already been published, so it never actually shipped in a downloadable build. This release includes it.
+
 = v1.7.10 =
 * Security - Fixed a CSRF gap in the "Refund to wallet" partial-payment AJAX action (`woo_wallet_refund_partial_payment`): it checked the `edit_shop_orders` capability but never verified a nonce, unlike its sibling wallet-refund action. A logged-in shop manager visiting a malicious page could have had their browser silently trigger this action and credit a customer's wallet for an arbitrary order. Fixed by adding the same `check_ajax_referer( 'order-item', 'security' )` check the sibling action already uses.
 
@@ -157,6 +162,9 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 * New - Wallet withdrawal requests: customers can ask for part of their wallet balance to be paid out to a bank account (bank dropdown, beneficiary name, account number, optional IBAN) from a new "Withdraw" tab on the wallet dashboard. Requested funds are reserved from the wallet immediately; admins review, approve or reject requests under Axfit Wallet → Withdrawals. Configure minimum/maximum amounts, an optional charge, and the bank list under Axfit Wallet → Settings → Withdrawal.
 
 == Upgrade Notice ==
+
+= 1.7.11 =
+Supersedes 1.7.10 — that release was published before its own CSRF fix was committed, so it never actually shipped. This version includes it, plus two more low-severity hardening fixes. Recommended for everyone.
 
 = 1.7.10 =
 Security fix for a CSRF gap in the wallet partial-payment refund AJAX action — recommended for everyone. See the changelog for details.

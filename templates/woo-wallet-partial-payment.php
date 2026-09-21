@@ -239,7 +239,8 @@ if ( 'on' === woo_wallet()->settings_api->get_option( 'is_auto_deduct_for_partia
 				event.stopImmediatePropagation();
 				var data = {
 					action: 'woo_wallet_partial_payment_update_session',
-					checked: $(this).is(':checked')
+					checked: $(this).is(':checked'),
+					security: '<?php echo esc_js( wp_create_nonce( 'woo-wallet-partial-payment-session' ) ); ?>'
 				};
 				$.post('<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>', data, function () {
 					$(document.body).trigger('update_checkout');

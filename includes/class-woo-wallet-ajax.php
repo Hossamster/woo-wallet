@@ -389,10 +389,27 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 		}
 
 		/**
-		 * Search users
+		 * Search users.
+		 *
+		 * The nonce here only proves the request came from a page any
+		 * logged-in customer can load (the transfer form on "My Wallet") —
+		 * it is not an authorization check. With the default exact-match
+		 * mode this is effectively an "is this email registered on the
+		 * site?" oracle (plus the matched username), so it's rate-limited
+		 * the same way the withdrawal/transfer actions are, to stop a
+		 * customer from mass-probing emails for targeted phishing.
 		 */
 		public function woo_wallet_user_search() {
 			check_ajax_referer( 'search-user', 'security' );
+
+			$rate_limit = (int) apply_filters( 'woo_wallet_user_search_rate_limit_per_minute', 20, get_current_user_id() );
+			$rate_key   = 'woo_wallet_usearch_rate_' . get_current_user_id();
+			$rate_count = (int) get_transient( $rate_key );
+			if ( $rate_limit > 0 && $rate_count >= $rate_limit ) {
+				wp_send_json( array() );
+			}
+			set_transient( $rate_key, $rate_count + 1, MINUTE_IN_SECONDS );
+
 			$return = array();
 			$term   = isset( $_POST['term'] ) ? sanitize_text_field( wp_unslash( $_POST['term'] ) ) : '';
 			if ( apply_filters( 'woo_wallet_user_search_exact_match', true ) ) {
@@ -432,11 +449,12 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 		 * @return void
 		 */
 		public function woo_wallet_partial_payment_update_session() {
+			check_ajax_referer( 'woo-wallet-partial-payment-session', 'security' );
 			if ( is_wallet_account_locked() ) {
 				update_wallet_partial_payment_session();
 				wp_die();
 			}
-			if ( isset( $_POST['checked'] ) && 'true' === $_POST['checked'] ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			if ( isset( $_POST['checked'] ) && 'true' === $_POST['checked'] ) {
 				update_wallet_partial_payment_session( woo_wallet()->wallet->get_wallet_balance( get_current_user_id(), 'edit' ) );
 			} else {
 				update_wallet_partial_payment_session();
