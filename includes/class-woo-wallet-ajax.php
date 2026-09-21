@@ -223,6 +223,7 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 		public function woo_wallet_refund_partial_payment() {
 			global $wpdb;
 
+			check_ajax_referer( 'order-item', 'security' );
 			if ( ! current_user_can( 'edit_shop_orders' ) ) {
 				wp_die( -1 );
 			}
