@@ -1,6 +1,6 @@
 <p align="center">
   <br>
-  <img src="https://raw.githubusercontent.com/Hossamster/woo-wallet/main/build/frontend/images/axfit-wallet.png" width="96" height="96" alt="Axfit Wallet Logo" onerror="this.style.display='none'">
+  <img src="https://raw.githubusercontent.com/Hossamster/woo-wallet/main/build/frontend/images/AXFIT_official_logo.svg" width="96" height="96" alt="Axfit Wallet Logo" onerror="this.style.display='none'">
   <h1 align="center">💳 Axfit Wallet for WooCommerce</h1>
   <p align="center">
     <strong>A high-performance, concurrency-safe digital wallet, store credit, and rewards engine for WooCommerce & headless mobile applications.</strong>
