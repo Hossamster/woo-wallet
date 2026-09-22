@@ -127,6 +127,7 @@ final class Woo_Wallet {
 			include_once WOO_WALLET_ABSPATH . 'includes/export/class-terawallet-csv-exporter.php';
 			include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-settings.php';
 			include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-admin.php';
+			include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-dashboard-widget.php';
 		}
 		if ( $this->is_request( 'frontend' ) ) {
 			include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-frontend.php';

@@ -464,3 +464,33 @@ function woo_wallet_update_177_db_schema() {
 	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 	dbDelta( Woo_Wallet_Install::get_withdrawals_schema() );
 }
+
+/**
+ * 1.7.12: add `idx_deleted_date (deleted, date)` to `woo_wallet_transactions`.
+ *
+ * Every existing index on this table is user-scoped (idx_user_date,
+ * idx_user_category, ...) — fine for a single customer's statement, but a
+ * store-wide "today, across every customer" aggregate (the admin dashboard
+ * widget) has no index to range-scan on and would fall back to a full table
+ * scan that only gets slower as the ledger grows.
+ *
+ * Deliberately not a plain dbDelta() call: confirmed empirically that
+ * dbDelta() reliably adds a *new* index when the table itself is being
+ * created fresh (a real install already gets this index straight from
+ * Woo_Wallet_Install::get_schema()), but does NOT reliably add a new
+ * secondary index via ALTER TABLE on a table that already exists — exactly
+ * the upgrade path this function runs on. Explicit SHOW INDEX check + ALTER
+ * TABLE, same pattern as the pre-1.4 column migrations above (and the
+ * lesson from the quoting bug fixed in those — table names are real
+ * identifiers here, not $wpdb->prepare() placeholders).
+ *
+ * @return void
+ */
+function woo_wallet_update_1712_db_schema() {
+	global $wpdb;
+	$table_name = $wpdb->base_prefix . 'woo_wallet_transactions';
+	if ( $table_name === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		&& ! $wpdb->get_var( "SHOW INDEX FROM `{$table_name}` WHERE Key_name = 'idx_deleted_date'" ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$wpdb->query( "ALTER TABLE `{$table_name}` ADD KEY `idx_deleted_date` (`deleted`, `date`)" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+	}
+}
