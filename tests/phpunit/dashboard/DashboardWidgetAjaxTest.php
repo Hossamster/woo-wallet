@@ -30,7 +30,12 @@ class Dashboard_Widget_Ajax_Test extends WP_Ajax_UnitTestCase {
 		 */
 		new Woo_Wallet_Dashboard_Widget();
 
+		// 'administrator' only has manage_woocommerce when
+		// WC_Install::create_roles() has run against this test database —
+		// not guaranteed on a fresh CI database. Grant it explicitly, same
+		// as WalletAjaxNonceTest does for its own capability.
 		$this->admin_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		get_userdata( $this->admin_id )->add_cap( 'manage_woocommerce' );
 	}
 
 	public function test_rejects_a_request_without_a_valid_nonce() {

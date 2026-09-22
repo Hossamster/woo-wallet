@@ -22,7 +22,12 @@ class Dashboard_Widget_Quick_Credit_Test extends WP_Ajax_UnitTestCase {
 		// DashboardWidgetAjaxTest's docblock for the full reasoning.
 		new Woo_Wallet_Dashboard_Widget();
 
+		// 'administrator' only has manage_woocommerce when
+		// WC_Install::create_roles() has run against this test database —
+		// not guaranteed on a fresh CI database. Grant it explicitly, same
+		// as WalletAjaxNonceTest does for its own capability.
 		$this->admin_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		get_userdata( $this->admin_id )->add_cap( 'manage_woocommerce' );
 	}
 
 	private function balance( $user_id ) {

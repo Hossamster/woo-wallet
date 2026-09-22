@@ -54,8 +54,22 @@ class Dashboard_Widget_Test extends WP_UnitTestCase {
 		return $widget;
 	}
 
+	/**
+	 * The 'administrator' role only has manage_woocommerce when
+	 * WC_Install::create_roles() has run against this test database — not
+	 * guaranteed on a fresh CI database. Every other test in this suite
+	 * grants the exact capability it needs explicitly (see
+	 * WalletAjaxNonceTest) rather than relying on the role; do the same
+	 * here instead of assuming 'administrator' implies it.
+	 */
+	private function create_admin() {
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		get_userdata( $user_id )->add_cap( 'manage_woocommerce' );
+		return $user_id;
+	}
+
 	public function test_widget_registers_for_a_user_with_the_wallet_capability() {
-		$admin_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$admin_id = $this->create_admin();
 
 		$this->register_widget_as( $admin_id );
 
@@ -81,7 +95,7 @@ class Dashboard_Widget_Test extends WP_UnitTestCase {
 	}
 
 	public function test_render_outputs_the_snapshot_body_with_no_fatal() {
-		$admin_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$admin_id = $this->create_admin();
 		wp_set_current_user( $admin_id );
 
 		$widget = new Woo_Wallet_Dashboard_Widget();
@@ -101,7 +115,7 @@ class Dashboard_Widget_Test extends WP_UnitTestCase {
 	 */
 	public function test_render_reflects_a_pending_withdrawal() {
 		global $wpdb;
-		$admin_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$admin_id    = $this->create_admin();
 		$customer_id = self::factory()->user->create();
 		$wpdb->insert(
 			$wpdb->base_prefix . 'woo_wallet_withdrawals',
