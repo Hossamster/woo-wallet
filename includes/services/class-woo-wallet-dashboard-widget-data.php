@@ -3,17 +3,23 @@
  * Wallet admin-dashboard widget — data service.
  *
  * Read-only aggregate queries backing the Financial Health Snapshot + Alerts
- * section of Woo_Wallet_Dashboard_Widget (Phase 1 of the dashboard-widget
- * feature). Mirrors Woo_Wallet_Reports_Data's shape (delegates the liability
- * figure to it rather than duplicating that query) and reuses the same
- * `woo_wallet_reports_cache_version` option — already bumped on every
- * `woo_wallet_transaction_recorded` event — so the widget's cache
- * invalidates in lockstep with the Reports page's, with no new hook needed.
+ * section of Woo_Wallet_Dashboard_Widget. Mirrors Woo_Wallet_Reports_Data's
+ * shape (delegates the liability figure to it rather than duplicating that
+ * query) and reuses the same `woo_wallet_reports_cache_version` option —
+ * already bumped on every `woo_wallet_transaction_recorded` event — so the
+ * widget's cache invalidates in lockstep with the Reports page's, with no
+ * new hook needed.
  *
- * Every "today" query filters on `date` (site-local, since the ledger writes
+ * Flow/high-value/net-flow figures are scoped to a selectable period (Today
+ * / 7 days / This month — Phase 2's date-range tabs); total liability and
+ * pending withdrawals are current-state figures and deliberately NOT
+ * period-scoped — a "7-day outstanding liability" isn't a meaningful
+ * number, it's simply what's owed right now.
+ *
+ * Every period query filters on `date` (site-local, since the ledger writes
  * it with `current_time( 'mysql' )` — see Woo_Wallet_Statement_Service's
  * resolve_range() docblock for the same reasoning) and `deleted = 0`,
- * matching the new `idx_deleted_date` composite index added in Phase 0 —
+ * matching the `idx_deleted_date` composite index added in Phase 0 —
  * without it, this becomes a full table scan on every dashboard page load.
  *
  * @package StandaleneTech
@@ -28,6 +34,10 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget_Data' ) ) {
 	 * Aggregate queries for the wallet dashboard widget.
 	 */
 	class Woo_Wallet_Dashboard_Widget_Data {
+
+		const PERIOD_TODAY = 'today';
+		const PERIOD_7DAYS = '7days';
+		const PERIOD_MONTH = 'month';
 
 		/**
 		 * Reused for total liability + currency formatting rather than
@@ -46,17 +56,79 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget_Data' ) ) {
 		}
 
 		/**
-		 * Today's date boundaries, site-local — same shape as
-		 * Woo_Wallet_Statement_Service::resolve_range().
+		 * Every period a caller may request. Anything else falls back to
+		 * PERIOD_TODAY (see get_snapshot()/range_for_period()).
 		 *
-		 * @return array{date:string,start:string,end:string}
+		 * @return string[]
 		 */
-		public function today_range() {
-			$today = current_time( 'Y-m-d' );
+		public function allowed_periods() {
+			return array( self::PERIOD_TODAY, self::PERIOD_7DAYS, self::PERIOD_MONTH );
+		}
+
+		/**
+		 * Human labels for the period tabs.
+		 *
+		 * @return array<string,string>
+		 */
+		public function period_labels() {
 			return array(
-				'date'  => $today,
-				'start' => $today . ' 00:00:00',
-				'end'   => $today . ' 23:59:59',
+				self::PERIOD_TODAY => __( 'Today', 'woo-wallet' ),
+				self::PERIOD_7DAYS => __( '7 Days', 'woo-wallet' ),
+				self::PERIOD_MONTH => __( 'This Month', 'woo-wallet' ),
+			);
+		}
+
+		/**
+		 * A short translated phrase describing a period, for inline alert
+		 * copy (e.g. "outflow is unusually high against inflow today").
+		 *
+		 * @param string $period One of allowed_periods().
+		 * @return string
+		 */
+		public function period_phrase( $period ) {
+			switch ( $period ) {
+				case self::PERIOD_7DAYS:
+					return __( 'over the last 7 days', 'woo-wallet' );
+				case self::PERIOD_MONTH:
+					return __( 'this month', 'woo-wallet' );
+				case self::PERIOD_TODAY:
+				default:
+					return __( 'today', 'woo-wallet' );
+			}
+		}
+
+		/**
+		 * Date boundaries for a period, site-local — same shape as
+		 * Woo_Wallet_Statement_Service::resolve_range(). An unrecognised
+		 * period resolves to PERIOD_TODAY rather than erroring, so a bad/
+		 * forged AJAX request degrades to the default tab instead of a
+		 * failed query.
+		 *
+		 * @param string $period One of allowed_periods().
+		 * @return array{period:string,from:string,to:string,start:string,end:string}
+		 */
+		public function range_for_period( $period ) {
+			$today = current_time( 'Y-m-d' );
+
+			switch ( $period ) {
+				case self::PERIOD_7DAYS:
+					$from = gmdate( 'Y-m-d', strtotime( $today . ' -6 days' ) );
+					break;
+				case self::PERIOD_MONTH:
+					$from = current_time( 'Y-m-01' );
+					break;
+				default:
+					$period = self::PERIOD_TODAY;
+					$from   = $today;
+					break;
+			}
+
+			return array(
+				'period' => $period,
+				'from'   => $from,
+				'to'     => $today,
+				'start'  => $from . ' 00:00:00',
+				'end'    => $today . ' 23:59:59',
 			);
 		}
 
@@ -80,7 +152,7 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget_Data' ) ) {
 		}
 
 		/**
-		 * Total outstanding wallet liability.
+		 * Total outstanding wallet liability. Current-state — not period-scoped.
 		 *
 		 * @return float
 		 */
@@ -89,13 +161,14 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget_Data' ) ) {
 		}
 
 		/**
-		 * Today's total inflow (credits) and outflow (debits), live rows only.
+		 * Total inflow (credits) and outflow (debits) over a period, live rows only.
 		 *
+		 * @param string $period One of allowed_periods().
 		 * @return array{inflow:float,outflow:float}
 		 */
-		public function today_flow() {
+		public function flow_for_period( $period ) {
 			global $wpdb;
-			$range = $this->today_range();
+			$range = $this->range_for_period( $period );
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 			$row = $wpdb->get_row(
 				$wpdb->prepare(
@@ -116,6 +189,7 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget_Data' ) ) {
 
 		/**
 		 * Pending withdrawal requests: count + total requested amount.
+		 * Current-state — not period-scoped.
 		 *
 		 * @return array{count:int,amount:float}
 		 */
@@ -146,13 +220,14 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget_Data' ) ) {
 		}
 
 		/**
-		 * Count of today's live transactions at or above the high-value
-		 * threshold. Empty/disabled threshold short-circuits to zero without
-		 * a query.
+		 * Count of live transactions at or above the high-value threshold,
+		 * within a period. Empty/disabled threshold short-circuits to zero
+		 * without a query.
 		 *
+		 * @param string $period One of allowed_periods().
 		 * @return array{count:int,threshold:float}
 		 */
-		public function high_value_transactions_today() {
+		public function high_value_transactions_for_period( $period ) {
 			$threshold = $this->high_value_threshold();
 			if ( $threshold <= 0 ) {
 				return array(
@@ -162,7 +237,7 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget_Data' ) ) {
 			}
 
 			global $wpdb;
-			$range = $this->today_range();
+			$range = $this->range_for_period( $period );
 			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 			$count = $wpdb->get_var(
 				$wpdb->prepare(
@@ -198,12 +273,12 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget_Data' ) ) {
 		}
 
 		/**
-		 * Whether today's flow trips the negative net-flow alert: outflow is
-		 * zero-inflow-with-any-outflow, or at/above the configured percentage
-		 * of inflow.
+		 * Whether a period's flow trips the negative net-flow alert: outflow
+		 * with zero inflow, or outflow at/above the configured percentage of
+		 * inflow.
 		 *
-		 * @param float $inflow  Today's inflow.
-		 * @param float $outflow Today's outflow.
+		 * @param float $inflow  Period inflow.
+		 * @param float $outflow Period outflow.
 		 * @return bool
 		 */
 		public function is_negative_net_flow( $inflow, $outflow ) {
@@ -217,29 +292,35 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget_Data' ) ) {
 		}
 
 		/**
-		 * Assemble the full Phase 1 snapshot, cached in a transient keyed on
-		 * the shared reports cache-version option (see class docblock).
+		 * Assemble the full snapshot for a period, cached in a transient
+		 * keyed on the shared reports cache-version option (see class
+		 * docblock) and the period, so each tab caches independently.
 		 *
-		 * @param array $args Pass `array( 'nocache' => true )` to bypass the cache.
+		 * @param array $args `period` (one of allowed_periods(), default today) and/or `nocache` => true to bypass the cache.
 		 * @return array
 		 */
 		public function get_snapshot( $args = array() ) {
+			$period = isset( $args['period'] ) && in_array( $args['period'], $this->allowed_periods(), true )
+				? $args['period']
+				: self::PERIOD_TODAY;
+
 			$version   = (int) get_option( 'woo_wallet_reports_cache_version', 0 );
-			$cache_key = 'woo_wallet_dashboard_snapshot_' . $version;
+			$cache_key = 'woo_wallet_dashboard_snapshot_' . $version . '_' . $period;
 			$cached    = get_transient( $cache_key );
 			if ( false !== $cached && is_array( $cached ) && empty( $args['nocache'] ) ) {
 				return $cached;
 			}
 
-			$flow       = $this->today_flow();
+			$flow       = $this->flow_for_period( $period );
 			$pending    = $this->pending_withdrawals();
-			$high_value = $this->high_value_transactions_today();
+			$high_value = $this->high_value_transactions_for_period( $period );
 
 			$data = array(
+				'period'                     => $period,
 				'base_currency'              => $this->base_currency(),
 				'total_liability'            => $this->total_liability(),
-				'today_inflow'               => $flow['inflow'],
-				'today_outflow'              => $flow['outflow'],
+				'inflow'                     => $flow['inflow'],
+				'outflow'                    => $flow['outflow'],
 				'pending_withdrawals_count'  => $pending['count'],
 				'pending_withdrawals_amount' => $pending['amount'],
 				'high_value_count'           => $high_value['count'],

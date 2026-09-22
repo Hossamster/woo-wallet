@@ -1,13 +1,17 @@
 <?php
 /**
- * Admin View: wp-admin dashboard widget — wallet financial snapshot.
+ * Admin View: wp-admin dashboard widget — wallet financial snapshot shell.
  *
- * Phase 1: Financial Health Snapshot + Alerts. Expects `$data` (a
- * Woo_Wallet_Dashboard_Widget_Data instance) and `$snapshot` (from
- * $data->get_snapshot()), both set by Woo_Wallet_Dashboard_Widget::render()
- * before including this file. Date-range tabs and Quick Actions/Growth
- * Insights land in later phases of the same feature — see the
- * dashboard-widget feature plan.
+ * Renders the widget's styles, period tabs (Today / 7 Days / This Month),
+ * and the initial snapshot body (templates/admin/dashboard-widget-body.php).
+ * Clicking a tab re-fetches that body via AJAX
+ * (Woo_Wallet_Dashboard_Widget::ajax_refresh) and swaps it in — no full
+ * wp-admin page reload. Quick Actions and Growth Insights land in later
+ * phases of the same feature — see the dashboard-widget feature plan.
+ *
+ * Expects `$data` (a Woo_Wallet_Dashboard_Widget_Data instance) and
+ * `$snapshot` (from $data->get_snapshot()), both set by
+ * Woo_Wallet_Dashboard_Widget::render() before including this file.
  *
  * @package StandaleneTech
  * @var Woo_Wallet_Dashboard_Widget_Data $data
@@ -18,10 +22,37 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-$withdrawals_url = admin_url( 'admin.php?page=woo-wallet-withdrawals' );
-$pending_url     = add_query_arg( 'withdrawal_status', 'pending', $withdrawals_url );
+$period_labels = $data->period_labels();
+$nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION );
 ?>
 <style>
+	.woo-wallet-dashboard-widget .twdw-tabs {
+		display: flex;
+		gap: 4px;
+		margin: 0 0 10px;
+		border-bottom: 1px solid #dcdcde;
+	}
+	.woo-wallet-dashboard-widget .twdw-tab {
+		background: none;
+		border: none;
+		cursor: pointer;
+		padding: 6px 10px;
+		margin: 0 0 -1px;
+		font-size: 12px;
+		color: #646970;
+		border-bottom: 2px solid transparent;
+	}
+	.woo-wallet-dashboard-widget .twdw-tab:hover {
+		color: #1d2327;
+	}
+	.woo-wallet-dashboard-widget .twdw-tab.is-active {
+		color: #1d2327;
+		font-weight: 600;
+		border-bottom-color: #2271b1;
+	}
+	.woo-wallet-dashboard-widget .twdw-body.is-loading {
+		opacity: .5;
+	}
 	.woo-wallet-dashboard-widget .twdw-alerts {
 		margin: 0 0 12px;
 	}
@@ -79,102 +110,51 @@ $pending_url     = add_query_arg( 'withdrawal_status', 'pending', $withdrawals_u
 	}
 </style>
 <div class="woo-wallet-dashboard-widget">
-	<?php if ( ! empty( $snapshot['is_negative_net_flow_alert'] ) ) : ?>
-		<div class="twdw-alerts">
-			<p class="twdw-alert">
-				<span class="dashicons dashicons-warning" aria-hidden="true"></span>
-				<span>
-					<?php
-					printf(
-						/* translators: 1: today's outflow, 2: today's inflow, both formatted amounts */
-						esc_html__( "Today's outflow (%1\$s) is unusually high against inflow (%2\$s).", 'woo-wallet' ),
-						'<strong>' . esc_html( $data->format_amount( $snapshot['today_outflow'] ) ) . '</strong>',
-						'<strong>' . esc_html( $data->format_amount( $snapshot['today_inflow'] ) ) . '</strong>'
-					);
-					?>
-				</span>
-			</p>
-		</div>
-	<?php endif; ?>
+	<nav class="twdw-tabs">
+		<?php foreach ( $period_labels as $period => $label ) : ?>
+			<button
+				type="button"
+				class="twdw-tab<?php echo $period === $snapshot['period'] ? ' is-active' : ''; ?>"
+				data-period="<?php echo esc_attr( $period ); ?>"
+			><?php echo esc_html( $label ); ?></button>
+		<?php endforeach; ?>
+	</nav>
 
-	<?php if ( ! empty( $snapshot['high_value_count'] ) ) : ?>
-		<div class="twdw-alerts">
-			<p class="twdw-alert">
-				<span class="dashicons dashicons-flag" aria-hidden="true"></span>
-				<span>
-					<?php
-					printf(
-						/* translators: 1: number of high-value transactions today, 2: the configured threshold amount */
-						esc_html(
-							_n(
-								'%1$d transaction today was at or above %2$s.',
-								'%1$d transactions today were at or above %2$s.',
-								$snapshot['high_value_count'],
-								'woo-wallet'
-							)
-						),
-						(int) $snapshot['high_value_count'],
-						'<strong>' . esc_html( $data->format_amount( $snapshot['high_value_threshold'] ) ) . '</strong>'
-					);
-					?>
-				</span>
-			</p>
-		</div>
-	<?php endif; ?>
-
-	<?php if ( ! empty( $snapshot['pending_withdrawals_count'] ) ) : ?>
-		<div class="twdw-alerts">
-			<p class="twdw-alert">
-				<span class="dashicons dashicons-money-alt" aria-hidden="true"></span>
-				<span>
-					<a href="<?php echo esc_url( $pending_url ); ?>">
-						<?php
-						printf(
-							/* translators: 1: number of pending withdrawal requests, 2: total pending amount */
-							esc_html(
-								_n(
-									'%1$d withdrawal request (%2$s) is waiting for review.',
-									'%1$d withdrawal requests (%2$s) are waiting for review.',
-									$snapshot['pending_withdrawals_count'],
-									'woo-wallet'
-								)
-							),
-							(int) $snapshot['pending_withdrawals_count'],
-							esc_html( $data->format_amount( $snapshot['pending_withdrawals_amount'] ) )
-						);
-						?>
-					</a>
-				</span>
-			</p>
-		</div>
-	<?php endif; ?>
-
-	<div class="twdw-grid">
-		<div class="twdw-stat">
-			<span class="twdw-stat__label"><?php esc_html_e( 'Outstanding liability', 'woo-wallet' ); ?></span>
-			<span class="twdw-stat__value"><?php echo esc_html( $data->format_amount( $snapshot['total_liability'] ) ); ?></span>
-		</div>
-		<div class="twdw-stat">
-			<span class="twdw-stat__label"><?php esc_html_e( 'Pending withdrawals', 'woo-wallet' ); ?></span>
-			<span class="twdw-stat__value"><?php echo esc_html( $data->format_amount( $snapshot['pending_withdrawals_amount'] ) ); ?></span>
-		</div>
-		<div class="twdw-stat">
-			<span class="twdw-stat__label"><?php esc_html_e( "Today's inflow", 'woo-wallet' ); ?></span>
-			<span class="twdw-stat__value is-credit"><?php echo esc_html( $data->format_amount( $snapshot['today_inflow'] ) ); ?></span>
-		</div>
-		<div class="twdw-stat">
-			<span class="twdw-stat__label"><?php esc_html_e( "Today's outflow", 'woo-wallet' ); ?></span>
-			<span class="twdw-stat__value is-debit"><?php echo esc_html( $data->format_amount( $snapshot['today_outflow'] ) ); ?></span>
-		</div>
+	<div class="twdw-body" data-security="<?php echo esc_attr( $nonce ); ?>">
+		<?php include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget-body.php'; ?>
 	</div>
-
-	<p class="twdw-footer">
-		<?php
-		printf(
-			/* translators: %s: last-generated timestamp */
-			esc_html__( 'Updated %s', 'woo-wallet' ),
-			esc_html( $snapshot['generated_at'] )
-		);
-		?>
-	</p>
 </div>
+<script type="text/javascript">
+	jQuery(function ($) {
+		// Scoped to this specific widget box (WordPress renders the widget
+		// id as the postbox id), so multiple wp_add_dashboard_widget() boxes
+		// on the same screen never cross-wire their tab clicks.
+		var $widget = $('#<?php echo esc_js( Woo_Wallet_Dashboard_Widget::WIDGET_ID ); ?> .woo-wallet-dashboard-widget');
+
+		$widget.on('click', '.twdw-tab', function () {
+			var $tab  = $(this);
+			var $body = $widget.find('.twdw-body');
+			var period = $tab.data('period');
+
+			if ($tab.hasClass('is-active') || $body.hasClass('is-loading')) {
+				return;
+			}
+
+			$body.addClass('is-loading');
+
+			$.post(ajaxurl, {
+				action: 'woo_wallet_dashboard_widget_refresh',
+				period: period,
+				security: $body.data('security')
+			}).done(function (response) {
+				if (response && response.success) {
+					$widget.find('.twdw-tab').removeClass('is-active');
+					$tab.addClass('is-active');
+					$body.html(response.data.html);
+				}
+			}).always(function () {
+				$body.removeClass('is-loading');
+			});
+		});
+	});
+</script>

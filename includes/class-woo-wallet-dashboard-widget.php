@@ -39,10 +39,19 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 		const WIDGET_ID = 'woo_wallet_dashboard_widget';
 
 		/**
+		 * check_ajax_referer()/wp_create_nonce() action name for the
+		 * period-tab AJAX refresh.
+		 *
+		 * @var string
+		 */
+		const AJAX_NONCE_ACTION = 'woo-wallet-dashboard-widget';
+
+		/**
 		 * Class constructor.
 		 */
 		public function __construct() {
 			add_action( 'wp_dashboard_setup', array( $this, 'register_widget' ) );
+			add_action( 'wp_ajax_woo_wallet_dashboard_widget_refresh', array( $this, 'ajax_refresh' ) );
 		}
 
 		/**
@@ -62,6 +71,19 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 		}
 
 		/**
+		 * Load the data service. Required lazily by render()/ajax_refresh()
+		 * rather than at file-load time — never needed on a request that
+		 * only registers the widget (e.g. wp_dashboard_setup running for a
+		 * user who never opens the Dashboard screen).
+		 *
+		 * @return Woo_Wallet_Dashboard_Widget_Data
+		 */
+		protected function data_service() {
+			require_once WOO_WALLET_ABSPATH . 'includes/services/class-woo-wallet-dashboard-widget-data.php';
+			return new Woo_Wallet_Dashboard_Widget_Data();
+		}
+
+		/**
 		 * Render the widget body. Kept as a separate template file, not
 		 * inline HTML in this method, matching every other admin view in
 		 * this plugin. Exposes the data service and snapshot as local
@@ -70,11 +92,43 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 		 * templates/admin/html-exporter.php.
 		 */
 		public function render() {
-			require_once WOO_WALLET_ABSPATH . 'includes/services/class-woo-wallet-dashboard-widget-data.php';
-			$data     = new Woo_Wallet_Dashboard_Widget_Data();
-			$snapshot = $data->get_snapshot();
+			$data     = $this->data_service();
+			$snapshot = $data->get_snapshot( array( 'period' => Woo_Wallet_Dashboard_Widget_Data::PERIOD_TODAY ) );
 
 			include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget.php';
+		}
+
+		/**
+		 * AJAX: re-render the snapshot body for a selected period tab
+		 * (Today / 7 days / This month), so switching tabs doesn't reload
+		 * the whole wp-admin dashboard. Same capability gate as
+		 * register_widget() — a request without it is rejected before any
+		 * query runs, same as every other wallet AJAX action.
+		 */
+		public function ajax_refresh() {
+			check_ajax_referer( self::AJAX_NONCE_ACTION, 'security' );
+			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+				wp_die( -1 );
+			}
+
+			$data   = $this->data_service();
+			$period = isset( $_POST['period'] ) ? sanitize_key( wp_unslash( $_POST['period'] ) ) : Woo_Wallet_Dashboard_Widget_Data::PERIOD_TODAY; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified above via check_ajax_referer().
+			if ( ! in_array( $period, $data->allowed_periods(), true ) ) {
+				$period = Woo_Wallet_Dashboard_Widget_Data::PERIOD_TODAY;
+			}
+
+			$snapshot = $data->get_snapshot( array( 'period' => $period ) );
+
+			ob_start();
+			include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget-body.php';
+			$html = ob_get_clean();
+
+			wp_send_json_success(
+				array(
+					'html'   => $html,
+					'period' => $snapshot['period'],
+				)
+			);
 		}
 	}
 }

@@ -1,7 +1,8 @@
 <?php
 /**
- * Woo_Wallet_Dashboard_Widget_Data — Phase 1 aggregate queries backing the
- * dashboard widget's Financial Health Snapshot + Alerts section.
+ * Woo_Wallet_Dashboard_Widget_Data — aggregate queries backing the dashboard
+ * widget's Financial Health Snapshot + Alerts section (Phase 1) and its
+ * Today / 7 Days / This Month date-range tabs (Phase 2).
  */
 class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 
@@ -72,11 +73,54 @@ class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 		$this->assertSame( 60.0, $this->data->total_liability() );
 	}
 
-	// -- today_flow() -------------------------------------------------------
+	// -- range_for_period() --------------------------------------------------
 
-	public function test_today_flow_sums_only_todays_live_transactions() {
-		$user_id = self::factory()->user->create();
-		$today   = current_time( 'Y-m-d' );
+	public function test_range_for_period_today_is_a_single_day() {
+		$today = current_time( 'Y-m-d' );
+		$range = $this->data->range_for_period( 'today' );
+
+		$this->assertSame( 'today', $range['period'] );
+		$this->assertSame( $today, $range['from'] );
+		$this->assertSame( $today, $range['to'] );
+	}
+
+	public function test_range_for_period_7days_spans_seven_days_inclusive() {
+		$today = current_time( 'Y-m-d' );
+		$range = $this->data->range_for_period( '7days' );
+
+		$this->assertSame( gmdate( 'Y-m-d', strtotime( $today . ' -6 days' ) ), $range['from'] );
+		$this->assertSame( $today, $range['to'] );
+	}
+
+	public function test_range_for_period_month_starts_on_the_first() {
+		$range = $this->data->range_for_period( 'month' );
+
+		$this->assertSame( current_time( 'Y-m-01' ), $range['from'] );
+		$this->assertSame( current_time( 'Y-m-d' ), $range['to'] );
+	}
+
+	public function test_range_for_period_falls_back_to_today_for_an_unknown_period() {
+		$today = current_time( 'Y-m-d' );
+		$range = $this->data->range_for_period( 'not-a-real-period' );
+
+		$this->assertSame( 'today', $range['period'] );
+		$this->assertSame( $today, $range['from'] );
+	}
+
+	public function test_allowed_periods_and_labels_are_consistent() {
+		$allowed = $this->data->allowed_periods();
+		$labels  = $this->data->period_labels();
+
+		foreach ( $allowed as $period ) {
+			$this->assertArrayHasKey( $period, $labels );
+		}
+	}
+
+	// -- flow_for_period() ----------------------------------------------------
+
+	public function test_flow_for_period_today_sums_only_todays_live_transactions() {
+		$user_id   = self::factory()->user->create();
+		$today     = current_time( 'Y-m-d' );
 		$yesterday = gmdate( 'Y-m-d', strtotime( $today . ' -1 day' ) );
 
 		$this->insert_transaction( $user_id, 'credit', 100, $today . ' 10:00:00' );
@@ -84,13 +128,28 @@ class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 		// Outside today's range — must not be counted.
 		$this->insert_transaction( $user_id, 'credit', 500, $yesterday . ' 10:00:00' );
 
-		$flow = $this->data->today_flow();
+		$flow = $this->data->flow_for_period( 'today' );
 
 		$this->assertSame( 100.0, $flow['inflow'] );
 		$this->assertSame( 30.0, $flow['outflow'] );
 	}
 
-	public function test_today_flow_ignores_soft_deleted_rows() {
+	public function test_flow_for_period_7days_includes_transactions_from_earlier_in_the_window() {
+		$user_id     = self::factory()->user->create();
+		$today       = current_time( 'Y-m-d' );
+		$three_ago   = gmdate( 'Y-m-d', strtotime( $today . ' -3 days' ) );
+		$eight_ago   = gmdate( 'Y-m-d', strtotime( $today . ' -8 days' ) );
+
+		$this->insert_transaction( $user_id, 'credit', 100, $three_ago . ' 10:00:00' );
+		// Outside the 7-day window — must not be counted.
+		$this->insert_transaction( $user_id, 'credit', 500, $eight_ago . ' 10:00:00' );
+
+		$flow = $this->data->flow_for_period( '7days' );
+
+		$this->assertSame( 100.0, $flow['inflow'] );
+	}
+
+	public function test_flow_for_period_ignores_soft_deleted_rows() {
 		global $wpdb;
 		$user_id = self::factory()->user->create();
 		$today   = current_time( 'Y-m-d' );
@@ -108,7 +167,7 @@ class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 			)
 		);
 
-		$flow = $this->data->today_flow();
+		$flow = $this->data->flow_for_period( 'today' );
 
 		$this->assertSame( 0.0, $flow['inflow'] );
 	}
@@ -134,7 +193,7 @@ class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 		$this->assertSame( 0.0, $pending['amount'] );
 	}
 
-	// -- high_value_transactions_today() -------------------------------------
+	// -- high_value_transactions_for_period() ---------------------------------
 
 	public function test_high_value_watch_disabled_by_default() {
 		$this->assertSame( 0.0, $this->data->high_value_threshold() );
@@ -142,11 +201,11 @@ class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 		$user_id = self::factory()->user->create();
 		$this->insert_transaction( $user_id, 'credit', 100000, current_time( 'Y-m-d' ) . ' 10:00:00' );
 
-		$result = $this->data->high_value_transactions_today();
+		$result = $this->data->high_value_transactions_for_period( 'today' );
 		$this->assertSame( 0, $result['count'], 'A zero/unset threshold must disable the watch, not match everything.' );
 	}
 
-	public function test_high_value_watch_counts_only_todays_qualifying_transactions() {
+	public function test_high_value_watch_counts_only_qualifying_transactions_in_period() {
 		$this->set_general_option( 'dashboard_high_value_threshold', 500 );
 		$user_id = self::factory()->user->create();
 		$today   = current_time( 'Y-m-d' );
@@ -155,10 +214,23 @@ class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 		$this->insert_transaction( $user_id, 'credit', 499.99, $today . ' 10:00:00' ); // below, doesn't count.
 		$this->insert_transaction( $user_id, 'debit', 600, $today . ' 11:00:00' ); // either type counts.
 
-		$result = $this->data->high_value_transactions_today();
+		$result = $this->data->high_value_transactions_for_period( 'today' );
 
 		$this->assertSame( 500.0, $result['threshold'] );
 		$this->assertSame( 2, $result['count'] );
+	}
+
+	public function test_high_value_watch_respects_the_selected_period() {
+		$this->set_general_option( 'dashboard_high_value_threshold', 500 );
+		$user_id   = self::factory()->user->create();
+		$eight_ago = gmdate( 'Y-m-d', strtotime( current_time( 'Y-m-d' ) . ' -8 days' ) );
+
+		// Qualifies for the amount, but outside both the "today" and the
+		// 7-day window.
+		$this->insert_transaction( $user_id, 'credit', 600, $eight_ago . ' 10:00:00' );
+
+		$this->assertSame( 0, $this->data->high_value_transactions_for_period( 'today' )['count'] );
+		$this->assertSame( 0, $this->data->high_value_transactions_for_period( '7days' )['count'] );
 	}
 
 	// -- net_outflow_alert_percent() / is_negative_net_flow() ---------------
@@ -192,9 +264,51 @@ class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 	public function test_get_snapshot_shape() {
 		$snapshot = $this->data->get_snapshot();
 
-		foreach ( array( 'base_currency', 'total_liability', 'today_inflow', 'today_outflow', 'pending_withdrawals_count', 'pending_withdrawals_amount', 'high_value_count', 'high_value_threshold', 'is_negative_net_flow_alert', 'generated_at' ) as $key ) {
+		foreach ( array( 'period', 'base_currency', 'total_liability', 'inflow', 'outflow', 'pending_withdrawals_count', 'pending_withdrawals_amount', 'high_value_count', 'high_value_threshold', 'is_negative_net_flow_alert', 'generated_at' ) as $key ) {
 			$this->assertArrayHasKey( $key, $snapshot );
 		}
+	}
+
+	public function test_get_snapshot_defaults_to_the_today_period() {
+		$snapshot = $this->data->get_snapshot();
+		$this->assertSame( 'today', $snapshot['period'] );
+	}
+
+	public function test_get_snapshot_falls_back_to_today_for_an_unknown_period() {
+		$snapshot = $this->data->get_snapshot( array( 'period' => 'not-a-real-period' ) );
+		$this->assertSame( 'today', $snapshot['period'] );
+	}
+
+	public function test_get_snapshot_scopes_flow_to_the_requested_period() {
+		$user_id   = self::factory()->user->create();
+		$three_ago = gmdate( 'Y-m-d', strtotime( current_time( 'Y-m-d' ) . ' -3 days' ) );
+		$this->insert_transaction( $user_id, 'credit', 250, $three_ago . ' 10:00:00' );
+
+		$today_snapshot = $this->data->get_snapshot( array( 'period' => 'today' ) );
+		$week_snapshot  = $this->data->get_snapshot( array( 'period' => '7days' ) );
+
+		$this->assertSame( 0.0, $today_snapshot['inflow'] );
+		$this->assertSame( 250.0, $week_snapshot['inflow'] );
+	}
+
+	public function test_get_snapshot_caches_each_period_independently() {
+		$user_id = self::factory()->user->create();
+		woo_wallet()->wallet->credit( $user_id, 100, 'test' );
+
+		// Warm only the "today" cache entry.
+		$this->data->get_snapshot( array( 'period' => 'today' ) );
+
+		global $wpdb;
+		$wpdb->query( "UPDATE {$wpdb->base_prefix}woo_wallet_transactions SET amount = 999" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+
+		// "7days" was never cached — it must compute fresh and see the
+		// update, proving it isn't reusing "today"'s cache entry.
+		$week = $this->data->get_snapshot( array( 'period' => '7days' ) );
+		$this->assertSame( 999.0, $week['total_liability'], "An uncached period must not reuse another period's cached entry." );
+
+		// "today" must still serve its own untouched, earlier cache.
+		$today_again = $this->data->get_snapshot( array( 'period' => 'today' ) );
+		$this->assertSame( 100.0, $today_again['total_liability'] );
 	}
 
 	public function test_get_snapshot_is_cached_until_the_reports_cache_version_bumps() {
