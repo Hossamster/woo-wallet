@@ -67,6 +67,9 @@ class Woo_Wallet_Install {
 		'1.7.7'  => array(
 			'woo_wallet_update_177_db_schema',
 		),
+		'1.7.12' => array(
+			'woo_wallet_update_1712_db_schema',
+		),
 	);
 	/**
 	 * Plugin install
@@ -97,10 +100,15 @@ class Woo_Wallet_Install {
 	/**
 	 * Plugin table schema
 	 *
+	 * Public (not private) so that db_updates migration functions in
+	 * woo-wallet-update-functions.php — which live outside this class — can
+	 * dbDelta() against the current definition, same as get_withdrawals_schema()
+	 * and get_withdrawal_notes_schema() below.
+	 *
 	 * @global object $wpdb
 	 * @return string
 	 */
-	private static function get_schema() {
+	public static function get_schema() {
 		global $wpdb;
 		$collate = '';
 
@@ -128,7 +136,8 @@ class Woo_Wallet_Install {
             KEY idx_user_deleted (user_id, deleted ),
             KEY idx_user_date (user_id, date ),
             KEY idx_user_currency (user_id, currency, deleted ),
-            KEY idx_user_category (user_id, category, deleted )
+            KEY idx_user_category (user_id, category, deleted ),
+            KEY idx_deleted_date (deleted, date )
         ) ENGINE=InnoDB $collate;
         CREATE TABLE {$wpdb->base_prefix}woo_wallet_transaction_meta (
             meta_id BIGINT UNSIGNED NOT NULL auto_increment,

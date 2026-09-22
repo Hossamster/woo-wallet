@@ -404,7 +404,7 @@ class TeraWallet_CSV_Exporter {
 			$export_row[] = str_replace( ' ', '_', strtolower( $this->format_data( $this->get_default_column_names()[ $column_id ] ) ) );
 		}
 
-		fputcsv( $buffer, $export_row );
+		fputcsv( $buffer, $export_row, ',', '"', '\\' );
 
 		return ob_get_clean();
 	}
@@ -443,7 +443,7 @@ class TeraWallet_CSV_Exporter {
 		foreach ( $columns as $column_id ) {
 			$export_row[] = $this->format_data( $record[ $column_id ] );
 		}
-		fputcsv( $buffer, $export_row );
+		fputcsv( $buffer, $export_row, ',', '"', '\\' );
 
 		return apply_filters( 'terawallet_row_to_export', ob_get_clean(), $record );
 	}

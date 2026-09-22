@@ -26,10 +26,15 @@ class Legacy_Migration_Test extends WP_UnitTestCase {
 	}
 
 	public function tear_down() {
-		// Dropping a column is DDL (implicit commit — WP_UnitTestCase's
+		// Dropping a column/index is DDL (implicit commit — WP_UnitTestCase's
 		// transaction rollback won't undo it), so explicitly restore the
 		// full modern schema afterwards rather than relying on rollback.
+		// install() alone doesn't reliably re-add a dropped *index* on an
+		// existing table (see the migration's own docblock) — re-run that
+		// migration explicitly too, so a test that drops idx_deleted_date
+		// can't leave it missing for whatever test runs next.
 		Woo_Wallet_Install::install();
+		woo_wallet_update_1712_db_schema();
 		parent::tear_down();
 	}
 
@@ -93,5 +98,46 @@ class Legacy_Migration_Test extends WP_UnitTestCase {
 
 		$this->assertSame( '', $wpdb->last_error );
 		$this->assertTrue( $this->column_exists( 'amount' ) );
+	}
+
+	/**
+	 * Confirmed empirically while adding this index (see the docblock on
+	 * woo_wallet_update_1712_db_schema()): dbDelta() reliably adds a brand
+	 * new table with every index from get_schema() intact, but silently
+	 * fails to ALTER an *existing* table to add a new secondary index — the
+	 * exact situation this migration runs in on a real upgrade. If this
+	 * migration were naively written as a plain dbDelta() call (as every
+	 * other schema migration in this file is, since dbDelta is otherwise
+	 * reliable for column changes), it would no-op on real upgrades and
+	 * this test would catch that: it fails today by asserting the index is
+	 * present after the drop+run, not merely that no SQL error occurred.
+	 */
+	public function test_update_1712_adds_missing_transactions_date_index() {
+		global $wpdb;
+		$wpdb->query( "ALTER TABLE `{$this->table}` DROP INDEX `idx_deleted_date`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$this->assertSame( '', $wpdb->last_error, 'Precondition: the drop itself must succeed.' );
+
+		woo_wallet_update_1712_db_schema();
+
+		$this->assertSame( '', $wpdb->last_error );
+		$this->assertNotEmpty(
+			$wpdb->get_results( "SHOW INDEX FROM `{$this->table}` WHERE Key_name = 'idx_deleted_date'" ), // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			'idx_deleted_date must exist after the migration runs against a table that was missing it.'
+		);
+	}
+
+	public function test_update_1712_is_idempotent_when_the_index_already_exists() {
+		global $wpdb;
+		// Don't drop it first — runs against a table that already has the
+		// index (the normal case for every subsequent plugin load after the
+		// first). Must not error trying to add a duplicate key.
+		woo_wallet_update_1712_db_schema();
+		woo_wallet_update_1712_db_schema();
+
+		$this->assertSame( '', $wpdb->last_error );
+		$this->assertCount(
+			2, // one row per column in the composite (deleted, date) index.
+			$wpdb->get_results( "SHOW INDEX FROM `{$this->table}` WHERE Key_name = 'idx_deleted_date'" ) // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		);
 	}
 }

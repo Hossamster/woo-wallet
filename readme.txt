@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.11
+Stable tag: 1.7.16
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,23 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.16 =
+* New - Growth & Customer Insights section on the "Axfit Wallet" dashboard widget (Phase 4, completing the dashboard widget feature): dormant wallet balances (positive balance, no order in a configurable number of days — default 30, under Dashboard Widget Alerts), today's P2P transfer volume, cashback credited today, and wallet's share of today's checkout revenue.
+
+= v1.7.15 =
+* New - Quick Actions on the "Axfit Wallet" dashboard widget (Phase 3 of the dashboard widget feature): a "Quick Credit" button opens a small modal to credit a customer (by email or username) without leaving the dashboard, and an "Export Today's Statement" button downloads a CSV of today's transactions directly.
+* Fix - Silenced a PHP 8.4 fputcsv() deprecation notice in the transaction CSV exporter (missing explicit $escape parameter) — found while adding test coverage for the new export action, unrelated to it otherwise.
+
+= v1.7.14 =
+* New - The "Axfit Wallet" dashboard widget now has Today / 7 Days / This Month tabs (Phase 2 of the dashboard widget feature). Switching tabs re-fetches the snapshot (inflow/outflow, high-value watch, negative net-flow alert) over AJAX for the selected range, with no full wp-admin page reload. Outstanding liability and pending withdrawals stay as current-state figures, unaffected by the tab.
+
+= v1.7.13 =
+* New - The "Axfit Wallet" dashboard widget now shows real numbers (Phase 1 of the dashboard widget feature): outstanding liability, today's inflow/outflow, a pending-withdrawals alert linking straight to the review screen, an optional high-value-transaction watch, and a negative net-flow alert — both watches have new configurable thresholds under Axfit Wallet → Settings → General Options → Dashboard Widget Alerts.
+
+= v1.7.12 =
+* New - First step of a new "Axfit Wallet" wp-admin dashboard widget (Dashboard → at a glance): registers the widget shell for users who can manage the wallet. Real figures (pending withdrawals, today's activity, alerts, quick actions) land in follow-up releases.
+* Dev - Added a composite `(deleted, date)` index on the wallet transactions table, needed for the dashboard widget's upcoming date-range queries across all users (the existing indexes are all user-scoped).
 
 = v1.7.11 =
 * Security - Rate-limited the wallet-transfer recipient lookup (`woo_wallet_user_search`): with the default exact-email-match mode, any logged-in customer could probe arbitrary email addresses with no throttling at all and learn whether each one is registered on the site (plus the matching username) — a low-severity enumeration oracle, now rate-limited the same way withdrawals/transfers already are.
