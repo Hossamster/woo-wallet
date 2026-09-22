@@ -108,6 +108,16 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 		font-size: 12px;
 		color: #646970;
 	}
+	.woo-wallet-dashboard-widget .twdw-actions {
+		display: flex;
+		gap: 8px;
+		margin: 12px 0 0;
+		padding-top: 10px;
+		border-top: 1px solid #dcdcde;
+	}
+	.woo-wallet-dashboard-widget .twdw-actions .notice {
+		margin: 0 0 8px;
+	}
 </style>
 <div class="woo-wallet-dashboard-widget">
 	<nav class="twdw-tabs">
@@ -123,6 +133,16 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 	<div class="twdw-body" data-security="<?php echo esc_attr( $nonce ); ?>">
 		<?php include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget-body.php'; ?>
 	</div>
+
+	<div id="woo-wallet-quick-action-notice" class="notice notice-success inline" style="display:none;"><p></p></div>
+
+	<div class="twdw-actions">
+		<button type="button" class="button twdw-quick-credit"><?php esc_html_e( 'Quick Credit', 'woo-wallet' ); ?></button>
+		<a
+			class="button"
+			href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=woo_wallet_dashboard_export_today' ), 'woo-wallet-dashboard-export-today' ) ); ?>"
+		><?php esc_html_e( "Export Today's Statement", 'woo-wallet' ); ?></a>
+	</div>
 </div>
 <script type="text/javascript">
 	jQuery(function ($) {
@@ -131,15 +151,11 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 		// on the same screen never cross-wire their tab clicks.
 		var $widget = $('#<?php echo esc_js( Woo_Wallet_Dashboard_Widget::WIDGET_ID ); ?> .woo-wallet-dashboard-widget');
 
-		$widget.on('click', '.twdw-tab', function () {
-			var $tab  = $(this);
+		function refreshPeriod(period) {
 			var $body = $widget.find('.twdw-body');
-			var period = $tab.data('period');
-
-			if ($tab.hasClass('is-active') || $body.hasClass('is-loading')) {
+			if ($body.hasClass('is-loading')) {
 				return;
 			}
-
 			$body.addClass('is-loading');
 
 			$.post(ajaxurl, {
@@ -149,11 +165,70 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 			}).done(function (response) {
 				if (response && response.success) {
 					$widget.find('.twdw-tab').removeClass('is-active');
-					$tab.addClass('is-active');
+					$widget.find('.twdw-tab[data-period="' + period + '"]').addClass('is-active');
 					$body.html(response.data.html);
 				}
 			}).always(function () {
 				$body.removeClass('is-loading');
+			});
+		}
+
+		$widget.on('click', '.twdw-tab', function () {
+			var period = $(this).data('period');
+			if ($(this).hasClass('is-active')) {
+				return;
+			}
+			refreshPeriod(period);
+		});
+
+		$widget.on('click', '.twdw-quick-credit', function (e) {
+			e.preventDefault();
+			$widget.find('#woo-wallet-quick-action-notice').hide();
+			$(this).WCBackboneModal({ template: 'woo-wallet-modal-dashboard-quick-credit' });
+		});
+
+		$(document).on('click', '#woo-wallet-quick-credit-confirm', function (e) {
+			e.preventDefault();
+			var $btn    = $(this);
+			var $modal  = $btn.closest('.wc-backbone-modal');
+			var $error  = $modal.find('#woo-wallet-quick-credit-error');
+			var user    = $.trim($modal.find('#woo-wallet-quick-credit-user').val());
+			var amount  = parseFloat($modal.find('#woo-wallet-quick-credit-amount').val());
+			var note    = $modal.find('#woo-wallet-quick-credit-note').val() || '';
+
+			$error.hide().find('p').text('');
+
+			if (!user || isNaN(amount) || amount <= 0) {
+				$error.find('p').text('<?php echo esc_js( __( 'Enter a customer and an amount greater than zero.', 'woo-wallet' ) ); ?>');
+				$error.show();
+				return;
+			}
+
+			$btn.prop('disabled', true);
+
+			$.post(ajaxurl, {
+				action: 'woo_wallet_dashboard_widget_quick_credit',
+				user: user,
+				amount: amount,
+				note: note,
+				security: $widget.find('.twdw-body').data('security')
+			}).done(function (response) {
+				if (response && response.success) {
+					$('.wc-backbone-modal-backdrop.modal-close').trigger('click');
+					var $notice = $widget.find('#woo-wallet-quick-action-notice');
+					$notice.find('p').text(response.data.message);
+					$notice.show();
+					var $active = $widget.find('.twdw-tab.is-active');
+					refreshPeriod($active.length ? $active.data('period') : 'today');
+				} else {
+					$error.find('p').text((response && response.data && response.data.message) || '<?php echo esc_js( __( 'Something went wrong.', 'woo-wallet' ) ); ?>');
+					$error.show();
+				}
+			}).fail(function () {
+				$error.find('p').text('<?php echo esc_js( __( 'Something went wrong.', 'woo-wallet' ) ); ?>');
+				$error.show();
+			}).always(function () {
+				$btn.prop('disabled', false);
 			});
 		});
 	});

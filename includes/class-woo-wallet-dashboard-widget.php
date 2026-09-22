@@ -52,6 +52,23 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 		public function __construct() {
 			add_action( 'wp_dashboard_setup', array( $this, 'register_widget' ) );
 			add_action( 'wp_ajax_woo_wallet_dashboard_widget_refresh', array( $this, 'ajax_refresh' ) );
+			add_action( 'wp_ajax_woo_wallet_dashboard_widget_quick_credit', array( $this, 'ajax_quick_credit' ) );
+			add_action( 'admin_post_woo_wallet_dashboard_export_today', array( $this, 'handle_export_today' ) );
+			add_action( 'admin_enqueue_scripts', array( $this, 'admin_enqueue_scripts' ) );
+		}
+
+		/**
+		 * Enqueue wc-backbone-modal for the Quick Credit modal, Dashboard
+		 * screen only — same scoped-enqueue pattern as
+		 * Woo_Wallet_Withdrawal::admin_enqueue_scripts() for its own
+		 * customer-search modal assets.
+		 */
+		public function admin_enqueue_scripts() {
+			$screen = get_current_screen();
+			if ( ! $screen || 'dashboard' !== $screen->id ) {
+				return;
+			}
+			wp_enqueue_script( 'wc-backbone-modal' );
 		}
 
 		/**
@@ -96,6 +113,7 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 			$snapshot = $data->get_snapshot( array( 'period' => Woo_Wallet_Dashboard_Widget_Data::PERIOD_TODAY ) );
 
 			include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget.php';
+			include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget-quick-credit-modal.php';
 		}
 
 		/**
@@ -129,6 +147,107 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 					'period' => $snapshot['period'],
 				)
 			);
+		}
+
+		/**
+		 * AJAX: Quick Credit — the one credit-only action offered from the
+		 * widget (no debit, no bulk targeting; the full Credit/Debit bulk
+		 * action already exists on Wallet -> Users for anything larger).
+		 * Resolves the customer by email or username, entered as plain text
+		 * rather than a select2 customer-search field: fewer moving parts
+		 * inside a Backbone-modal-injected template, and this is a small
+		 * widget-box action, not a full admin screen.
+		 */
+		public function ajax_quick_credit() {
+			check_ajax_referer( self::AJAX_NONCE_ACTION, 'security' );
+			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+				wp_die( -1 );
+			}
+
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified above via check_ajax_referer().
+			$identifier = isset( $_POST['user'] ) ? sanitize_text_field( wp_unslash( $_POST['user'] ) ) : '';
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified above via check_ajax_referer().
+			$amount = isset( $_POST['amount'] ) ? (float) sanitize_text_field( wp_unslash( $_POST['amount'] ) ) : 0.0;
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- verified above via check_ajax_referer().
+			$note = isset( $_POST['note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['note'] ) ) : '';
+
+			$user = '' !== $identifier ? get_user_by( 'email', $identifier ) : false;
+			if ( ! $user && '' !== $identifier ) {
+				$user = get_user_by( 'login', $identifier );
+			}
+
+			if ( ! $user ) {
+				wp_send_json_error( array( 'message' => __( 'No customer found with that email or username.', 'woo-wallet' ) ) );
+			}
+
+			if ( $amount <= 0 ) {
+				wp_send_json_error( array( 'message' => __( 'Enter an amount greater than zero.', 'woo-wallet' ) ) );
+			}
+
+			$details        = '' !== $note ? $note : __( 'Quick credit from wallet dashboard widget', 'woo-wallet' );
+			$transaction_id = woo_wallet()->wallet->credit( $user->ID, $amount, $details, array( 'category' => 'adjustment' ) );
+
+			if ( ! $transaction_id ) {
+				wp_send_json_error( array( 'message' => __( 'Could not credit this wallet. Please try again.', 'woo-wallet' ) ) );
+			}
+
+			wp_send_json_success(
+				array(
+					'message' => sprintf(
+						/* translators: 1: formatted amount, 2: customer display name */
+						__( 'Credited %1$s to %2$s.', 'woo-wallet' ),
+						$this->data_service()->format_amount( $amount ),
+						$user->display_name
+					),
+				)
+			);
+		}
+
+		/**
+		 * Build today's transactions CSV via TeraWallet_CSV_Exporter, driving
+		 * the same write_to_csv()/get_percent_complete() step loop
+		 * Woo_Wallet_Ajax::terawallet_do_ajax_transaction_export() uses —
+		 * just synchronously in one request instead of paginated over many,
+		 * since "today" is a small, bounded window. Kept separate from
+		 * handle_export_today() so it's callable/testable without also
+		 * triggering that method's final export()-then-die() file stream.
+		 *
+		 * @return TeraWallet_CSV_Exporter The exporter, with the file already written to disk.
+		 */
+		public function export_today_transactions() {
+			require_once WOO_WALLET_ABSPATH . 'includes/export/class-terawallet-csv-exporter.php';
+			$exporter = new TeraWallet_CSV_Exporter();
+			$exporter->set_export_type( 'transactions' );
+
+			$today = current_time( 'Y-m-d' );
+			$exporter->set_start_date( $today . ' 00:00:00' );
+			$exporter->set_end_date( $today . ' 23:59:59' );
+			// Random suffix: two admins exporting "today" around the same
+			// moment must not race on the same filename mid-write.
+			$exporter->set_filename( 'wallet-statement-' . $today . '-' . wp_generate_password( 8, false ) );
+
+			do {
+				$exporter->write_to_csv();
+			} while ( $exporter->get_percent_complete() < 100 );
+
+			return $exporter;
+		}
+
+		/**
+		 * admin-post.php handler for the "Export today's statement" quick
+		 * action — a plain link, not AJAX: the response IS the file
+		 * download, so a normal navigation is the right transport, same as
+		 * Woo_Wallet_Admin::download_export_file() for the full exporter.
+		 */
+		public function handle_export_today() {
+			check_admin_referer( 'woo-wallet-dashboard-export-today' );
+			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+				wp_die( esc_html__( 'You do not have permission to export wallet transactions.', 'woo-wallet' ) );
+			}
+
+			wc_set_time_limit( 0 );
+			$exporter = $this->export_today_transactions();
+			$exporter->export(); // Streams the file, deletes it, then die().
 		}
 	}
 }
