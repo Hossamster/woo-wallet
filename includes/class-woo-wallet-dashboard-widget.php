@@ -62,14 +62,18 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 		}
 
 		/**
-		 * Render the widget body.
-		 *
-		 * Phase 0: static shell only — real figures land in a later phase
-		 * (see the dashboard-widget feature plan). Kept as a separate
-		 * template file, not inline HTML in this method, matching every
-		 * other admin view in this plugin.
+		 * Render the widget body. Kept as a separate template file, not
+		 * inline HTML in this method, matching every other admin view in
+		 * this plugin. Exposes the data service and snapshot as local
+		 * variables ($data, $snapshot) rather than relying on the
+		 * template reading $this — same convention as
+		 * templates/admin/html-exporter.php.
 		 */
 		public function render() {
+			require_once WOO_WALLET_ABSPATH . 'includes/services/class-woo-wallet-dashboard-widget-data.php';
+			$data     = new Woo_Wallet_Dashboard_Widget_Data();
+			$snapshot = $data->get_snapshot();
+
 			include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget.php';
 		}
 	}

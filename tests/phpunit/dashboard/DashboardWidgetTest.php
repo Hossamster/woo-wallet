@@ -1,14 +1,15 @@
 <?php
 /**
- * Phase 0 smoke test for the new wp-admin dashboard widget
- * (Woo_Wallet_Dashboard_Widget, class-woo-wallet-dashboard-widget.php).
+ * Woo_Wallet_Dashboard_Widget — widget registration + rendering.
  *
  * This is the first thing that registers on wp_dashboard_setup in this
  * plugin — nothing else did before, so there's no prior art to copy for
  * "does it actually show up". These tests prove: the widget is offered to a
  * user with the wallet capability, is NOT offered to one without it (same
  * gate as every other admin screen, via get_wallet_user_capability()), and
- * its render() call produces real output rather than a fatal/blank screen.
+ * render() produces real output (the Phase 1 Financial Health Snapshot,
+ * backed by Woo_Wallet_Dashboard_Widget_Data — see DashboardWidgetDataTest
+ * for the aggregate-query coverage) rather than a fatal/blank screen.
  */
 class Dashboard_Widget_Test extends WP_UnitTestCase {
 
@@ -79,7 +80,7 @@ class Dashboard_Widget_Test extends WP_UnitTestCase {
 		);
 	}
 
-	public function test_render_outputs_the_placeholder_body_with_no_fatal() {
+	public function test_render_outputs_the_snapshot_body_with_no_fatal() {
 		$admin_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
 		wp_set_current_user( $admin_id );
 
@@ -90,6 +91,35 @@ class Dashboard_Widget_Test extends WP_UnitTestCase {
 		$output = ob_get_clean();
 
 		$this->assertStringContainsString( 'woo-wallet-dashboard-widget', $output );
-		$this->assertNotSame( '', trim( $output ) );
+		$this->assertStringContainsString( 'Outstanding liability', $output );
+	}
+
+	/**
+	 * Proves render() actually reaches the data service and reflects real
+	 * ledger/withdrawal state, not just static markup — a pending
+	 * withdrawal's amount must show up formatted in the output.
+	 */
+	public function test_render_reflects_a_pending_withdrawal() {
+		global $wpdb;
+		$admin_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$customer_id = self::factory()->user->create();
+		$wpdb->insert(
+			$wpdb->base_prefix . 'woo_wallet_withdrawals',
+			array(
+				'user_id'      => $customer_id,
+				'amount'       => 42,
+				'status'       => 'pending',
+				'date_created' => current_time( 'mysql' ),
+			)
+		);
+		wp_set_current_user( $admin_id );
+
+		$widget = new Woo_Wallet_Dashboard_Widget();
+		ob_start();
+		$widget->render();
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( '42', $output );
+		$this->assertStringContainsString( 'waiting for review', $output );
 	}
 }

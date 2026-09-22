@@ -443,6 +443,31 @@ if ( ! class_exists( 'Woo_Wallet_Settings' ) ) :
 				);
 			}
 
+			$dashboard_fields = array(
+				array(
+					'name'              => 'dashboard_high_value_threshold',
+					'label'             => __( 'High-Value Transaction Alert', 'woo-wallet' ),
+					'desc'              => __( 'Flag on the admin dashboard widget any single wallet transaction at or above this amount today. Leave blank or 0 to turn this alert off.', 'woo-wallet' ),
+					'type'              => 'number',
+					'prefix'            => html_entity_decode( get_woocommerce_currency_symbol( get_option( 'woocommerce_currency' ) ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ),
+					'step'              => '0.01',
+					'group'             => 'dashboard_widget',
+					'group_title'       => __( 'Dashboard Widget Alerts', 'woo-wallet' ),
+					'group_description' => __( 'Thresholds for the wp-admin dashboard widget\'s alerts', 'woo-wallet' ),
+					'half'              => true,
+				),
+				array(
+					'name'    => 'dashboard_net_outflow_alert_percent',
+					'label'   => __( 'Negative Net-Flow Alert (%)', 'woo-wallet' ),
+					'desc'    => __( 'Flag on the dashboard widget when today\'s wallet outflow reaches this percentage of today\'s inflow (e.g. 150 means outflow is 1.5x inflow or more).', 'woo-wallet' ),
+					'type'    => 'number',
+					'default' => 150,
+					'step'    => '1',
+					'group'   => 'dashboard_widget',
+					'half'    => true,
+				),
+			);
+
 			$settings_fields = array(
 				'_wallet_settings_actions' => $this->get_actions_settings_fields(),
 				'_wallet_settings_general' => array_merge(
@@ -450,6 +475,7 @@ if ( ! class_exists( 'Woo_Wallet_Settings' ) ) :
 					$partial_fields,
 					$transfer_fields,
 					$currency_handling_fields,
+					$dashboard_fields,
 					$this->wp_menu_locations()
 				),
 				'_wallet_settings_credit'  => array_merge(

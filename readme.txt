@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.12
+Stable tag: 1.7.13
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,9 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.13 =
+* New - The "Axfit Wallet" dashboard widget now shows real numbers (Phase 1 of the dashboard widget feature): outstanding liability, today's inflow/outflow, a pending-withdrawals alert linking straight to the review screen, an optional high-value-transaction watch, and a negative net-flow alert — both watches have new configurable thresholds under Axfit Wallet → Settings → General Options → Dashboard Widget Alerts.
 
 = v1.7.12 =
 * New - First step of a new "Axfit Wallet" wp-admin dashboard widget (Dashboard → at a glance): registers the widget shell for users who can manage the wallet. Real figures (pending withdrawals, today's activity, alerts, quick actions) land in follow-up releases.
