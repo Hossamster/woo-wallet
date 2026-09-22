@@ -334,5 +334,239 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget_Data' ) ) {
 
 			return $data;
 		}
+
+		// ---------------------------------------------------------------
+		// Phase 4 — Growth / Customer Insights. Deliberately NOT threaded
+		// through get_snapshot(): those figures are re-fetched on every
+		// period-tab click (Phase 2), and dormant-balance/checkout-share
+		// below are the heaviest queries in this class — they get their
+		// own, longer-lived cache entry (get_growth_insights()) instead of
+		// adding weight to every tab switch, and aren't period-scoped
+		// (a "7-day dormant balance" isn't a different question — the
+		// dormancy window is its own separate, merchant-configured setting).
+		// ---------------------------------------------------------------
+
+		/**
+		 * Merchant-configured "no order in N days" dormancy window.
+		 *
+		 * @return int
+		 */
+		public function dormant_days_threshold() {
+			$days = woo_wallet()->settings_api->get_option( 'dashboard_dormant_days', '_wallet_settings_general', 30 );
+			$days = is_numeric( $days ) && (int) $days > 0 ? (int) $days : 30;
+			return (int) apply_filters( 'woo_wallet_dashboard_dormant_days', $days );
+		}
+
+		/**
+		 * Positive-balance customers with no WooCommerce order in the
+		 * configured dormancy window.
+		 *
+		 * Capped to the top N positive balances (by amount) as the
+		 * candidate pool, cross-referenced against WooCommerce orders in
+		 * one query for that whole pool — not a per-customer query — so
+		 * this stays bounded on a large store. A store with more dormant
+		 * wallets than the cap undercounts rather than running an
+		 * unbounded scan; get_growth_insights() caches the result so the
+		 * cost is paid at most once per cache window either way.
+		 *
+		 * @return array{count:int,amount:float,threshold_days:int}
+		 */
+		public function dormant_balances() {
+			$days = $this->dormant_days_threshold();
+
+			global $wpdb;
+			$candidate_cap = (int) apply_filters( 'woo_wallet_dashboard_dormant_candidate_cap', 50 );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$rows = $wpdb->get_results(
+				$wpdb->prepare(
+					"SELECT user_id, SUM(CASE WHEN type='credit' THEN amount ELSE -amount END) AS balance
+					 FROM {$wpdb->base_prefix}woo_wallet_transactions
+					 WHERE deleted = 0
+					 GROUP BY user_id
+					 HAVING balance > 0
+					 ORDER BY balance DESC
+					 LIMIT %d",
+					$candidate_cap
+				)
+			);
+
+			if ( ! $rows ) {
+				return array(
+					'count'          => 0,
+					'amount'         => 0.0,
+					'threshold_days' => $days,
+				);
+			}
+
+			$candidate_ids = wp_list_pluck( $rows, 'user_id' );
+			$cutoff        = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
+
+			// Candidates who HAVE ordered since the cutoff — excluded below.
+			$active_ids = array();
+			if ( function_exists( 'wc_get_orders' ) ) {
+				$recent_orders = wc_get_orders(
+					array(
+						'customer'   => $candidate_ids,
+						'date_after' => $cutoff,
+						'limit'      => -1,
+						'return'     => 'objects',
+					)
+				);
+				foreach ( $recent_orders as $order ) {
+					$active_ids[ $order->get_customer_id() ] = true;
+				}
+			}
+
+			$count  = 0;
+			$amount = 0.0;
+			foreach ( $rows as $row ) {
+				if ( isset( $active_ids[ (int) $row->user_id ] ) ) {
+					continue;
+				}
+				++$count;
+				$amount += (float) $row->balance;
+			}
+
+			return array(
+				'count'          => $count,
+				'amount'         => $amount,
+				'threshold_days' => $days,
+			);
+		}
+
+		/**
+		 * Today's P2P transfer volume: count + amount SENT (the debit leg
+		 * only — a transfer writes both a debit and a credit row under
+		 * `category = 'transfer'`, and a transfer fee can make the credited
+		 * amount less than the debited amount, so summing both legs would
+		 * both double-count and overstate volume).
+		 *
+		 * @return array{count:int,amount:float}
+		 */
+		public function p2p_transfer_volume_today() {
+			global $wpdb;
+			$range = $this->range_for_period( self::PERIOD_TODAY );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$row = $wpdb->get_row(
+				$wpdb->prepare(
+					"SELECT COUNT(*) AS cnt, COALESCE(SUM(amount), 0) AS amount
+					 FROM {$wpdb->base_prefix}woo_wallet_transactions
+					 WHERE deleted = 0 AND type = 'debit' AND category = 'transfer' AND date BETWEEN %s AND %s",
+					$range['start'],
+					$range['end']
+				)
+			);
+			return array(
+				'count'  => $row ? (int) $row->cnt : 0,
+				'amount' => $row ? (float) $row->amount : 0.0,
+			);
+		}
+
+		/**
+		 * Cashback credited today — a plain sum, not a return-on-investment
+		 * figure (true ROI needs joining back to the order value it drove,
+		 * deliberately deferred — see the dashboard-widget feature plan).
+		 *
+		 * @return float
+		 */
+		public function cashback_credited_today() {
+			global $wpdb;
+			$range = $this->range_for_period( self::PERIOD_TODAY );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$amount = $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT COALESCE(SUM(amount), 0)
+					 FROM {$wpdb->base_prefix}woo_wallet_transactions
+					 WHERE deleted = 0 AND type = 'credit' AND category = 'cashback' AND date BETWEEN %s AND %s",
+					$range['start'],
+					$range['end']
+				)
+			);
+			return (float) $amount;
+		}
+
+		/**
+		 * What share of today's checkout revenue was paid via wallet (full
+		 * wallet-gateway `purchase` debits + `partial_payment` debits)
+		 * against total revenue from today's paid WooCommerce orders.
+		 *
+		 * @return array{wallet_paid:float,total_revenue:float,percent:float}
+		 */
+		public function wallet_share_of_checkout_today() {
+			global $wpdb;
+			$range = $this->range_for_period( self::PERIOD_TODAY );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wallet_paid = (float) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT COALESCE(SUM(amount), 0)
+					 FROM {$wpdb->base_prefix}woo_wallet_transactions
+					 WHERE deleted = 0 AND type = 'debit' AND category IN ('purchase','partial_payment') AND date BETWEEN %s AND %s",
+					$range['start'],
+					$range['end']
+				)
+			);
+
+			$total_revenue = 0.0;
+			if ( function_exists( 'wc_get_orders' ) ) {
+				$orders = wc_get_orders(
+					array(
+						'date_created' => $range['from'] . '...' . $range['to'],
+						'limit'        => -1,
+						'return'       => 'objects',
+						'status'       => wc_get_is_paid_statuses(),
+					)
+				);
+				foreach ( $orders as $order ) {
+					$total_revenue += (float) $order->get_total();
+				}
+			}
+
+			return array(
+				'wallet_paid'   => $wallet_paid,
+				'total_revenue' => $total_revenue,
+				'percent'       => $total_revenue > 0 ? ( $wallet_paid / $total_revenue ) * 100 : 0.0,
+			);
+		}
+
+		/**
+		 * Assemble the Growth Insights block, cached separately from
+		 * get_snapshot() (see the section note above) under a longer TTL —
+		 * these figures are informational, not alert-driving, so slightly
+		 * staler data is an acceptable trade for not re-running the
+		 * dormant-balance/checkout-share queries on every page load.
+		 *
+		 * @param array $args `nocache` => true to bypass the cache.
+		 * @return array
+		 */
+		public function get_growth_insights( $args = array() ) {
+			$version   = (int) get_option( 'woo_wallet_reports_cache_version', 0 );
+			$cache_key = 'woo_wallet_dashboard_growth_' . $version;
+			$cached    = get_transient( $cache_key );
+			if ( false !== $cached && is_array( $cached ) && empty( $args['nocache'] ) ) {
+				return $cached;
+			}
+
+			$dormant  = $this->dormant_balances();
+			$transfer = $this->p2p_transfer_volume_today();
+			$checkout = $this->wallet_share_of_checkout_today();
+
+			$data = array(
+				'dormant_count'           => $dormant['count'],
+				'dormant_amount'          => $dormant['amount'],
+				'dormant_threshold_days'  => $dormant['threshold_days'],
+				'transfer_count'          => $transfer['count'],
+				'transfer_amount'         => $transfer['amount'],
+				'cashback_credited_today' => $this->cashback_credited_today(),
+				'wallet_paid_today'       => $checkout['wallet_paid'],
+				'checkout_total_today'    => $checkout['total_revenue'],
+				'wallet_share_percent'    => $checkout['percent'],
+				'generated_at'            => current_time( 'mysql' ),
+			);
+
+			$ttl = (int) apply_filters( 'woo_wallet_dashboard_growth_cache_ttl', 15 * MINUTE_IN_SECONDS );
+			set_transient( $cache_key, $data, max( 0, $ttl ) );
+
+			return $data;
+		}
 	}
 }

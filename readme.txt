@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.15
+Stable tag: 1.7.16
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,9 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.16 =
+* New - Growth & Customer Insights section on the "Axfit Wallet" dashboard widget (Phase 4, completing the dashboard widget feature): dormant wallet balances (positive balance, no order in a configurable number of days — default 30, under Dashboard Widget Alerts), today's P2P transfer volume, cashback credited today, and wallet's share of today's checkout revenue.
 
 = v1.7.15 =
 * New - Quick Actions on the "Axfit Wallet" dashboard widget (Phase 3 of the dashboard widget feature): a "Quick Credit" button opens a small modal to credit a customer (by email or username) without leaving the dashboard, and an "Export Today's Statement" button downloads a CSV of today's transactions directly.

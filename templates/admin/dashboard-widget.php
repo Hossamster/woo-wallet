@@ -3,19 +3,24 @@
  * Admin View: wp-admin dashboard widget — wallet financial snapshot shell.
  *
  * Renders the widget's styles, period tabs (Today / 7 Days / This Month),
- * and the initial snapshot body (templates/admin/dashboard-widget-body.php).
- * Clicking a tab re-fetches that body via AJAX
+ * the initial snapshot body (templates/admin/dashboard-widget-body.php),
+ * the Growth Insights section, and the Quick Actions row. Clicking a tab
+ * re-fetches the snapshot body via AJAX
  * (Woo_Wallet_Dashboard_Widget::ajax_refresh) and swaps it in — no full
- * wp-admin page reload. Quick Actions and Growth Insights land in later
- * phases of the same feature — see the dashboard-widget feature plan.
+ * wp-admin page reload. Growth Insights is NOT part of that swap (it isn't
+ * period-scoped — see Woo_Wallet_Dashboard_Widget_Data's Phase 4 section
+ * docblock), so it renders once here rather than living in
+ * dashboard-widget-body.php.
  *
- * Expects `$data` (a Woo_Wallet_Dashboard_Widget_Data instance) and
- * `$snapshot` (from $data->get_snapshot()), both set by
+ * Expects `$data` (a Woo_Wallet_Dashboard_Widget_Data instance), `$snapshot`
+ * (from $data->get_snapshot()), and `$growth` (from
+ * $data->get_growth_insights()), all set by
  * Woo_Wallet_Dashboard_Widget::render() before including this file.
  *
  * @package StandaleneTech
  * @var Woo_Wallet_Dashboard_Widget_Data $data
  * @var array                            $snapshot
+ * @var array                            $growth
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -118,6 +123,37 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 	.woo-wallet-dashboard-widget .twdw-actions .notice {
 		margin: 0 0 8px;
 	}
+	.woo-wallet-dashboard-widget .twdw-growth {
+		margin: 12px 0 0;
+		padding-top: 10px;
+		border-top: 1px solid #dcdcde;
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__title {
+		margin: 0 0 8px;
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: .02em;
+		color: #646970;
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__list {
+		margin: 0;
+		font-size: 13px;
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__list li {
+		display: flex;
+		justify-content: space-between;
+		gap: 8px;
+		padding: 4px 0;
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__label {
+		color: #646970;
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__value {
+		font-weight: 600;
+		color: #1d2327;
+		white-space: nowrap;
+	}
 </style>
 <div class="woo-wallet-dashboard-widget">
 	<nav class="twdw-tabs">
@@ -132,6 +168,66 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 
 	<div class="twdw-body" data-security="<?php echo esc_attr( $nonce ); ?>">
 		<?php include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget-body.php'; ?>
+	</div>
+
+	<div class="twdw-growth">
+		<p class="twdw-growth__title"><?php esc_html_e( 'Growth & Customer Insights', 'woo-wallet' ); ?></p>
+		<ul class="twdw-growth__list">
+			<li>
+				<span class="twdw-growth__label">
+					<?php
+					printf(
+						/* translators: %d: number of days with no order */
+						esc_html__( 'Dormant balances (%d+ days no order)', 'woo-wallet' ),
+						(int) $growth['dormant_threshold_days']
+					);
+					?>
+				</span>
+				<span class="twdw-growth__value">
+					<?php
+					printf(
+						/* translators: 1: number of dormant customers, 2: total dormant balance amount */
+						esc_html__( '%1$d (%2$s)', 'woo-wallet' ),
+						(int) $growth['dormant_count'],
+						esc_html( $data->format_amount( $growth['dormant_amount'] ) )
+					);
+					?>
+				</span>
+			</li>
+			<li>
+				<span class="twdw-growth__label"><?php esc_html_e( 'P2P transfers today', 'woo-wallet' ); ?></span>
+				<span class="twdw-growth__value">
+					<?php
+					printf(
+						/* translators: 1: number of transfers today, 2: total transfer amount */
+						esc_html__( '%1$d (%2$s)', 'woo-wallet' ),
+						(int) $growth['transfer_count'],
+						esc_html( $data->format_amount( $growth['transfer_amount'] ) )
+					);
+					?>
+				</span>
+			</li>
+			<li>
+				<span class="twdw-growth__label"><?php esc_html_e( 'Cashback credited today', 'woo-wallet' ); ?></span>
+				<span class="twdw-growth__value"><?php echo esc_html( $data->format_amount( $growth['cashback_credited_today'] ) ); ?></span>
+			</li>
+			<li>
+				<span class="twdw-growth__label"><?php esc_html_e( "Wallet share of today's checkout", 'woo-wallet' ); ?></span>
+				<span class="twdw-growth__value">
+					<?php
+					if ( $growth['checkout_total_today'] > 0 ) {
+						printf(
+							/* translators: %s: wallet share of today's checkout revenue, as a percentage */
+							esc_html__( '%s%%', 'woo-wallet' ),
+							esc_html( number_format_i18n( $growth['wallet_share_percent'], 1 ) )
+						);
+					} else {
+						esc_html_e( '—', 'woo-wallet' );
+					}
+					?>
+				</span>
+			</li>
+		</ul>
 	</div>
 
 	<div id="woo-wallet-quick-action-notice" class="notice notice-success inline" style="display:none;"><p></p></div>

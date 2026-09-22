@@ -1,8 +1,9 @@
 <?php
 /**
  * Woo_Wallet_Dashboard_Widget_Data — aggregate queries backing the dashboard
- * widget's Financial Health Snapshot + Alerts section (Phase 1) and its
- * Today / 7 Days / This Month date-range tabs (Phase 2).
+ * widget's Financial Health Snapshot + Alerts section (Phase 1), its
+ * Today / 7 Days / This Month date-range tabs (Phase 2), and its Growth &
+ * Customer Insights section (Phase 4).
  */
 class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 
@@ -34,14 +35,14 @@ class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 	 * the `date` column can be backdated — the wallet API always stamps
 	 * `current_time('mysql')` and has no "as of" parameter.
 	 */
-	private function insert_transaction( $user_id, $type, $amount, $date ) {
+	private function insert_transaction( $user_id, $type, $amount, $date, $category = 'other' ) {
 		global $wpdb;
 		$wpdb->insert(
 			$wpdb->base_prefix . 'woo_wallet_transactions',
 			array(
 				'user_id'  => $user_id,
 				'type'     => $type,
-				'category' => 'other',
+				'category' => $category,
 				'amount'   => $amount,
 				'currency' => 'USD',
 				'deleted'  => 0,
@@ -341,5 +342,187 @@ class Dashboard_Widget_Data_Test extends WP_UnitTestCase {
 
 		$fresh = $this->data->get_snapshot( array( 'nocache' => true ) );
 		$this->assertSame( 999.0, $fresh['total_liability'] );
+	}
+
+	// -- dormant_balances() -----------------------------------------------
+
+	public function test_dormant_days_threshold_defaults_to_30() {
+		$this->assertSame( 30, $this->data->dormant_days_threshold() );
+	}
+
+	public function test_dormant_days_threshold_reads_the_configured_value() {
+		$this->set_general_option( 'dashboard_dormant_days', 60 );
+		$this->assertSame( 60, $this->data->dormant_days_threshold() );
+	}
+
+	public function test_dormant_balances_ignores_customers_with_no_positive_balance() {
+		self::factory()->user->create(); // never credited — balance is 0.
+		$dormant = $this->data->dormant_balances();
+
+		$this->assertSame( 0, $dormant['count'] );
+		$this->assertSame( 0.0, $dormant['amount'] );
+	}
+
+	public function test_dormant_balances_counts_a_positive_balance_customer_with_no_orders_at_all() {
+		$user_id = self::factory()->user->create();
+		woo_wallet()->wallet->credit( $user_id, 100, 'test' );
+
+		$dormant = $this->data->dormant_balances();
+
+		$this->assertSame( 1, $dormant['count'] );
+		$this->assertSame( 100.0, $dormant['amount'] );
+	}
+
+	public function test_dormant_balances_excludes_a_customer_with_a_recent_order() {
+		$user_id = self::factory()->user->create();
+		woo_wallet()->wallet->credit( $user_id, 100, 'test' );
+
+		$order = wc_create_order( array( 'customer_id' => $user_id ) );
+		$order->set_date_created( current_time( 'mysql' ) );
+		$order->save();
+
+		$dormant = $this->data->dormant_balances();
+
+		$this->assertSame( 0, $dormant['count'] );
+	}
+
+	public function test_dormant_balances_counts_a_customer_whose_only_order_predates_the_threshold() {
+		$this->set_general_option( 'dashboard_dormant_days', 30 );
+		$user_id = self::factory()->user->create();
+		woo_wallet()->wallet->credit( $user_id, 100, 'test' );
+
+		$order = wc_create_order( array( 'customer_id' => $user_id ) );
+		$order->set_date_created( gmdate( 'Y-m-d H:i:s', strtotime( '-40 days' ) ) );
+		$order->save();
+
+		$dormant = $this->data->dormant_balances();
+
+		$this->assertSame( 1, $dormant['count'] );
+		$this->assertSame( 100.0, $dormant['amount'] );
+	}
+
+	// -- p2p_transfer_volume_today() -----------------------------------------
+
+	public function test_p2p_transfer_volume_counts_only_the_debit_leg_of_a_transfer() {
+		$sender    = self::factory()->user->create();
+		$recipient = self::factory()->user->create();
+		$today     = current_time( 'Y-m-d' );
+
+		// A transfer with a fee: sender debited 100, recipient credited only
+		// 95 — summing both legs would double count AND overstate volume.
+		$this->insert_transaction( $sender, 'debit', 100, $today . ' 10:00:00', 'transfer' );
+		$this->insert_transaction( $recipient, 'credit', 95, $today . ' 10:00:00', 'transfer' );
+
+		$result = $this->data->p2p_transfer_volume_today();
+
+		$this->assertSame( 1, $result['count'] );
+		$this->assertSame( 100.0, $result['amount'] );
+	}
+
+	public function test_p2p_transfer_volume_excludes_yesterdays_transfers() {
+		$sender    = self::factory()->user->create();
+		$yesterday = gmdate( 'Y-m-d', strtotime( current_time( 'Y-m-d' ) . ' -1 day' ) );
+		$this->insert_transaction( $sender, 'debit', 100, $yesterday . ' 10:00:00', 'transfer' );
+
+		$result = $this->data->p2p_transfer_volume_today();
+
+		$this->assertSame( 0, $result['count'] );
+	}
+
+	public function test_p2p_transfer_volume_ignores_other_categories() {
+		$user_id = self::factory()->user->create();
+		$this->insert_transaction( $user_id, 'debit', 100, current_time( 'Y-m-d' ) . ' 10:00:00', 'purchase' );
+
+		$result = $this->data->p2p_transfer_volume_today();
+
+		$this->assertSame( 0, $result['count'] );
+	}
+
+	// -- cashback_credited_today() -------------------------------------------
+
+	public function test_cashback_credited_today_sums_only_todays_cashback_credits() {
+		$user_id   = self::factory()->user->create();
+		$today     = current_time( 'Y-m-d' );
+		$yesterday = gmdate( 'Y-m-d', strtotime( $today . ' -1 day' ) );
+
+		$this->insert_transaction( $user_id, 'credit', 10, $today . ' 09:00:00', 'cashback' );
+		// Outside today — must not be counted.
+		$this->insert_transaction( $user_id, 'credit', 500, $yesterday . ' 09:00:00', 'cashback' );
+		// A cashback debit (e.g. clawback) — must not be counted as credited.
+		$this->insert_transaction( $user_id, 'debit', 999, $today . ' 09:00:00', 'cashback' );
+		// A different category — must not be counted.
+		$this->insert_transaction( $user_id, 'credit', 999, $today . ' 09:00:00', 'topup' );
+
+		$this->assertSame( 10.0, $this->data->cashback_credited_today() );
+	}
+
+	// -- wallet_share_of_checkout_today() -------------------------------------
+
+	public function test_wallet_share_of_checkout_computes_the_percentage() {
+		$user_id = self::factory()->user->create();
+		$this->insert_transaction( $user_id, 'debit', 40, current_time( 'Y-m-d' ) . ' 10:00:00', 'purchase' );
+
+		$order = wc_create_order( array( 'customer_id' => $user_id ) );
+		$order->set_total( 100 );
+		$order->set_status( 'processing' );
+		$order->set_date_created( current_time( 'mysql' ) );
+		$order->save();
+
+		$result = $this->data->wallet_share_of_checkout_today();
+
+		$this->assertSame( 40.0, $result['wallet_paid'] );
+		$this->assertSame( 100.0, $result['total_revenue'] );
+		$this->assertSame( 40.0, $result['percent'] );
+	}
+
+	public function test_wallet_share_of_checkout_ignores_unpaid_order_statuses() {
+		$user_id = self::factory()->user->create();
+		$order   = wc_create_order( array( 'customer_id' => $user_id ) );
+		$order->set_total( 100 );
+		$order->set_status( 'pending' ); // not a paid status.
+		$order->set_date_created( current_time( 'mysql' ) );
+		$order->save();
+
+		$result = $this->data->wallet_share_of_checkout_today();
+
+		$this->assertSame( 0.0, $result['total_revenue'] );
+	}
+
+	public function test_wallet_share_of_checkout_is_zero_percent_with_no_revenue_rather_than_a_division_error() {
+		$result = $this->data->wallet_share_of_checkout_today();
+		$this->assertSame( 0.0, $result['percent'] );
+	}
+
+	// -- get_growth_insights() -------------------------------------------------
+
+	public function test_get_growth_insights_shape() {
+		$growth = $this->data->get_growth_insights();
+
+		foreach ( array( 'dormant_count', 'dormant_amount', 'dormant_threshold_days', 'transfer_count', 'transfer_amount', 'cashback_credited_today', 'wallet_paid_today', 'checkout_total_today', 'wallet_share_percent', 'generated_at' ) as $key ) {
+			$this->assertArrayHasKey( $key, $growth );
+		}
+	}
+
+	public function test_get_growth_insights_is_cached_until_the_reports_cache_version_bumps() {
+		$user_id = self::factory()->user->create();
+		woo_wallet()->wallet->credit( $user_id, 100, 'test' );
+
+		$first = $this->data->get_growth_insights();
+		$this->assertSame( 1, $first['dormant_count'] );
+
+		// A second dormant-balance customer appears, inserted directly
+		// (bypassing woo_wallet()->wallet->credit(), which itself fires
+		// woo_wallet_transaction_recorded and would bump the cache version —
+		// defeating the point of this test) so the cache genuinely goes stale
+		// without being told to.
+		$other = self::factory()->user->create();
+		$this->insert_transaction( $other, 'credit', 50, current_time( 'mysql' ) );
+
+		$second = $this->data->get_growth_insights();
+		$this->assertSame( 1, $second['dormant_count'], 'Must serve the cached growth block, not recompute on every call.' );
+
+		update_option( 'woo_wallet_reports_cache_version', (int) get_option( 'woo_wallet_reports_cache_version', 0 ) + 1 );
+		$third = $this->data->get_growth_insights();
+		$this->assertSame( 2, $third['dormant_count'], 'A bumped cache version must recompute.' );
 	}
 }

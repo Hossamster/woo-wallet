@@ -466,6 +466,16 @@ if ( ! class_exists( 'Woo_Wallet_Settings' ) ) :
 					'group'   => 'dashboard_widget',
 					'half'    => true,
 				),
+				array(
+					'name'    => 'dashboard_dormant_days',
+					'label'   => __( 'Dormant Balance Window (days)', 'woo-wallet' ),
+					'desc'    => __( 'On the dashboard widget, a customer with a positive wallet balance and no order in this many days counts as "dormant".', 'woo-wallet' ),
+					'type'    => 'number',
+					'default' => 30,
+					'step'    => '1',
+					'group'   => 'dashboard_widget',
+					'half'    => true,
+				),
 			);
 
 			$settings_fields = array(

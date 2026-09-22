@@ -103,14 +103,15 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 		/**
 		 * Render the widget body. Kept as a separate template file, not
 		 * inline HTML in this method, matching every other admin view in
-		 * this plugin. Exposes the data service and snapshot as local
-		 * variables ($data, $snapshot) rather than relying on the
-		 * template reading $this — same convention as
+		 * this plugin. Exposes the data service, snapshot, and growth as
+		 * local variables ($data, $snapshot, $growth) rather than relying
+		 * on the template reading $this — same convention as
 		 * templates/admin/html-exporter.php.
 		 */
 		public function render() {
 			$data     = $this->data_service();
 			$snapshot = $data->get_snapshot( array( 'period' => Woo_Wallet_Dashboard_Widget_Data::PERIOD_TODAY ) );
+			$growth   = $data->get_growth_insights();
 
 			include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget.php';
 			include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget-quick-credit-modal.php';
