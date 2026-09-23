@@ -814,17 +814,35 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Fetch a page of requests. See build_where() for the supported filters;
-		 * `limit`/`offset` are additionally supported for pagination.
+		 * Resolve `$args['orderby']`/`$args['order']` to a safe `ORDER BY`
+		 * clause. Whitelisted against real column names here — never
+		 * trust a caller's `orderby` far enough to interpolate it
+		 * directly, even though Woo_Wallet_Withdrawal_Report::get_filter_args()
+		 * already whitelists it once on the way in from $_GET.
 		 *
-		 * @param array $args Filters plus optional {limit, offset}.
+		 * @param array $args {orderby?: string, order?: string}.
+		 * @return string e.g. 'ORDER BY id DESC'.
+		 */
+		private static function build_order_by( array $args ) {
+			$sortable = array( 'id', 'amount', 'date_created' );
+			$orderby  = isset( $args['orderby'] ) && in_array( $args['orderby'], $sortable, true ) ? $args['orderby'] : 'id';
+			$order    = isset( $args['order'] ) && 'ASC' === strtoupper( (string) $args['order'] ) ? 'ASC' : 'DESC';
+			return "ORDER BY {$orderby} {$order}";
+		}
+
+		/**
+		 * Fetch a page of requests. See build_where() for the supported filters;
+		 * `limit`/`offset` are additionally supported for pagination, and
+		 * `orderby`/`order` for sorting (see build_order_by()).
+		 *
+		 * @param array $args Filters plus optional {limit, offset, orderby, order}.
 		 * @return array
 		 */
 		public static function get_requests( array $args = array() ) {
 			global $wpdb;
 			list( $where, $params ) = self::build_where( $args );
 
-			$sql = 'SELECT * FROM ' . self::table() . ' WHERE ' . implode( ' AND ', $where ) . ' ORDER BY id DESC';
+			$sql = 'SELECT * FROM ' . self::table() . ' WHERE ' . implode( ' AND ', $where ) . ' ' . self::build_order_by( $args );
 			if ( ! empty( $args['limit'] ) ) {
 				$sql     .= ' LIMIT %d OFFSET %d';
 				$params[] = (int) $args['limit'];
@@ -852,6 +870,25 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				return (int) $wpdb->get_var( $wpdb->prepare( $sql, $params ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 			}
 			return (int) $wpdb->get_var( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+		}
+
+		/**
+		 * Sum the `amount` column over the same filter shape as
+		 * get_requests()/count_requests() — backs the Withdrawals list
+		 * screen's "totals for the current filter" summary strip.
+		 *
+		 * @param array $args Filters, see build_where().
+		 * @return float
+		 */
+		public static function sum_requests_amount( array $args = array() ) {
+			global $wpdb;
+			list( $where, $params ) = self::build_where( $args );
+
+			$sql = 'SELECT COALESCE(SUM(amount), 0) FROM ' . self::table() . ' WHERE ' . implode( ' AND ', $where );
+			if ( $params ) {
+				return (float) $wpdb->get_var( $wpdb->prepare( $sql, $params ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+			}
+			return (float) $wpdb->get_var( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
 		}
 
 		/**
@@ -1337,6 +1374,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				 * form), so nothing here needs an enclosing form.
 				 */
 				$table->views();
+				$table->render_summary_totals();
 				$table->display();
 				?>
 			</div>

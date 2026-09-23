@@ -163,6 +163,43 @@ class Withdrawal_Filter_Args_Test extends WP_UnitTestCase {
 		$this->assertArrayNotHasKey( 'before', $args );
 	}
 
+	// -- orderby / order (sortable columns) ----------------------------------
+
+	public function test_orderby_maps_the_list_tables_column_id_to_the_real_db_column() {
+		$_GET = array( 'orderby' => 'date', 'order' => 'asc' );
+		$args = Woo_Wallet_Withdrawal_Report::get_filter_args();
+		$this->assertSame( 'date_created', $args['orderby'] );
+		$this->assertSame( 'ASC', $args['order'] );
+	}
+
+	public function test_orderby_id_and_amount_pass_through_unmapped() {
+		$_GET = array( 'orderby' => 'amount' );
+		$this->assertSame( 'amount', Woo_Wallet_Withdrawal_Report::get_filter_args()['orderby'] );
+
+		$_GET = array( 'orderby' => 'id' );
+		$this->assertSame( 'id', Woo_Wallet_Withdrawal_Report::get_filter_args()['orderby'] );
+	}
+
+	public function test_order_defaults_to_desc_when_absent_or_not_asc() {
+		$_GET = array( 'orderby' => 'id' );
+		$this->assertSame( 'DESC', Woo_Wallet_Withdrawal_Report::get_filter_args()['order'] );
+
+		$_GET = array( 'orderby' => 'id', 'order' => 'sideways' );
+		$this->assertSame( 'DESC', Woo_Wallet_Withdrawal_Report::get_filter_args()['order'] );
+	}
+
+	public function test_an_unrecognised_orderby_column_is_dropped_entirely() {
+		$_GET = array( 'orderby' => 'not-a-real-column' );
+		$args = Woo_Wallet_Withdrawal_Report::get_filter_args();
+		$this->assertArrayNotHasKey( 'orderby', $args );
+		$this->assertArrayNotHasKey( 'order', $args );
+	}
+
+	public function test_no_orderby_param_means_no_orderby_key_at_all() {
+		$_GET = array();
+		$this->assertArrayNotHasKey( 'orderby', Woo_Wallet_Withdrawal_Report::get_filter_args() );
+	}
+
 	// -- resolve_customers() ------------------------------------------------
 
 	public function test_resolve_customers_by_numeric_id() {

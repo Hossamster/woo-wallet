@@ -53,6 +53,22 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 	}
 
 	/**
+	 * Sortable columns. The array key is the column id (get_columns()); the
+	 * `orderby` value it puts in the URL is mapped to a real, whitelisted
+	 * DB column name in get_filter_args() — never used to build SQL
+	 * directly from user input.
+	 *
+	 * @return array
+	 */
+	public function get_sortable_columns() {
+		return array(
+			'id'     => array( 'id', false ),
+			'amount' => array( 'amount', false ),
+			'date'   => array( 'date', false ),
+		);
+	}
+
+	/**
 	 * Empty-state message.
 	 */
 	public function no_items() {
@@ -154,60 +170,94 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 	}
 
 	/**
+	 * Read and sanitize every filter field straight from $_GET, with no
+	 * business validation (whitelisting, date-format checks, etc.) applied
+	 * yet — that happens in get_filter_args(), the only consumer that needs
+	 * validated args to build a DB query. extra_tablenav() needs the raw
+	 * values too, just to redisplay whatever the user actually typed/picked
+	 * (including something not yet valid, e.g. a half-typed date), so it
+	 * calls this directly instead of get_filter_args(). Kept as the single
+	 * place that reads these $_GET keys, so a new filter field is added in
+	 * one place rather than two.
+	 *
+	 * @return array
+	 */
+	private static function get_raw_filter_values() {
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended
+		$search = isset( $_GET['withdrawal_search'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_search'] ) ) : '';
+		if ( '' === $search && isset( $_GET['withdrawal_customer'] ) ) {
+			$search = sanitize_text_field( wp_unslash( $_GET['withdrawal_customer'] ) );
+		}
+
+		return array(
+			'status'       => isset( $_GET['withdrawal_status'] ) ? sanitize_key( wp_unslash( $_GET['withdrawal_status'] ) ) : '',
+			'search'       => $search,
+			'bank'         => isset( $_GET['withdrawal_bank'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_bank'] ) ) : '',
+			'receipt'      => isset( $_GET['withdrawal_receipt'] ) ? sanitize_key( wp_unslash( $_GET['withdrawal_receipt'] ) ) : '',
+			'requested_by' => isset( $_GET['withdrawal_requested_by'] ) ? sanitize_key( wp_unslash( $_GET['withdrawal_requested_by'] ) ) : '',
+			'processed_by' => isset( $_GET['withdrawal_processed_by'] ) ? absint( $_GET['withdrawal_processed_by'] ) : 0,
+			'min_amount'   => isset( $_GET['withdrawal_min_amount'] ) && '' !== trim( (string) $_GET['withdrawal_min_amount'] ) ? (float) $_GET['withdrawal_min_amount'] : null,
+			'max_amount'   => isset( $_GET['withdrawal_max_amount'] ) && '' !== trim( (string) $_GET['withdrawal_max_amount'] ) ? (float) $_GET['withdrawal_max_amount'] : null,
+			'after'        => isset( $_GET['withdrawal_after'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_after'] ) ) : '',
+			'before'       => isset( $_GET['withdrawal_before'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_before'] ) ) : '',
+		);
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+	}
+
+	/**
 	 * Translate the current $_GET filters into Woo_Wallet_Withdrawal::get_requests()
-	 * args. Shared by prepare_items() and extra_tablenav() so the two can never
-	 * disagree about what's currently filtered.
+	 * args. Shared by prepare_items() and extra_tablenav() (via
+	 * get_raw_filter_values()) so the two can never disagree about what's
+	 * currently filtered.
 	 *
 	 * @return array|false
 	 */
 	public static function get_filter_args() {
-		// phpcs:disable WordPress.Security.NonceVerification.Recommended
-		$status       = isset( $_GET['withdrawal_status'] ) ? sanitize_key( wp_unslash( $_GET['withdrawal_status'] ) ) : '';
-		$search       = isset( $_GET['withdrawal_search'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_search'] ) ) : '';
-		if ( '' === $search && isset( $_GET['withdrawal_customer'] ) ) {
-			$search = sanitize_text_field( wp_unslash( $_GET['withdrawal_customer'] ) );
-		}
-		$bank         = isset( $_GET['withdrawal_bank'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_bank'] ) ) : '';
-		$receipt      = isset( $_GET['withdrawal_receipt'] ) ? sanitize_key( wp_unslash( $_GET['withdrawal_receipt'] ) ) : '';
-		$requested_by = isset( $_GET['withdrawal_requested_by'] ) ? sanitize_key( wp_unslash( $_GET['withdrawal_requested_by'] ) ) : '';
-		$processed_by = isset( $_GET['withdrawal_processed_by'] ) ? absint( $_GET['withdrawal_processed_by'] ) : 0;
-		$min_amount   = isset( $_GET['withdrawal_min_amount'] ) && '' !== trim( (string) $_GET['withdrawal_min_amount'] ) ? (float) $_GET['withdrawal_min_amount'] : null;
-		$max_amount   = isset( $_GET['withdrawal_max_amount'] ) && '' !== trim( (string) $_GET['withdrawal_max_amount'] ) ? (float) $_GET['withdrawal_max_amount'] : null;
-		$after        = isset( $_GET['withdrawal_after'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_after'] ) ) : '';
-		$before       = isset( $_GET['withdrawal_before'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_before'] ) ) : '';
-		// phpcs:enable WordPress.Security.NonceVerification.Recommended
-
+		$raw = self::get_raw_filter_values();
 		$args = array();
 
-		if ( in_array( $status, array( 'pending', 'processing', 'paid', 'rejected' ), true ) ) {
-			$args['status'] = $status;
+		if ( in_array( $raw['status'], array( 'pending', 'processing', 'paid', 'rejected' ), true ) ) {
+			$args['status'] = $raw['status'];
 		}
-		if ( '' !== $search ) {
-			$args['search'] = $search;
+		if ( '' !== $raw['search'] ) {
+			$args['search'] = $raw['search'];
 		}
-		if ( '' !== $bank && isset( Woo_Wallet_Withdrawal::get_configured_banks()[ $bank ] ) ) {
-			$args['bank_name'] = $bank;
+		if ( '' !== $raw['bank'] && isset( Woo_Wallet_Withdrawal::get_configured_banks()[ $raw['bank'] ] ) ) {
+			$args['bank_name'] = $raw['bank'];
 		}
-		if ( in_array( $receipt, array( 'has', 'missing' ), true ) ) {
-			$args['receipt'] = $receipt;
+		if ( in_array( $raw['receipt'], array( 'has', 'missing' ), true ) ) {
+			$args['receipt'] = $raw['receipt'];
 		}
-		if ( in_array( $requested_by, array( 'self', 'staff' ), true ) ) {
-			$args['created_by'] = $requested_by;
+		if ( in_array( $raw['requested_by'], array( 'self', 'staff' ), true ) ) {
+			$args['created_by'] = $raw['requested_by'];
 		}
-		if ( $processed_by > 0 ) {
-			$args['processed_by'] = $processed_by;
+		if ( $raw['processed_by'] > 0 ) {
+			$args['processed_by'] = $raw['processed_by'];
 		}
-		if ( null !== $min_amount && $min_amount >= 0 ) {
-			$args['min_amount'] = $min_amount;
+		if ( null !== $raw['min_amount'] && $raw['min_amount'] >= 0 ) {
+			$args['min_amount'] = $raw['min_amount'];
 		}
-		if ( null !== $max_amount && $max_amount >= 0 ) {
-			$args['max_amount'] = $max_amount;
+		if ( null !== $raw['max_amount'] && $raw['max_amount'] >= 0 ) {
+			$args['max_amount'] = $raw['max_amount'];
 		}
-		if ( '' !== $after && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $after ) ) {
-			$args['after'] = $after . ' 00:00:00';
+		if ( '' !== $raw['after'] && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $raw['after'] ) ) {
+			$args['after'] = $raw['after'] . ' 00:00:00';
 		}
-		if ( '' !== $before && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $before ) ) {
-			$args['before'] = $before . ' 23:59:59';
+		if ( '' !== $raw['before'] && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $raw['before'] ) ) {
+			$args['before'] = $raw['before'] . ' 23:59:59';
+		}
+
+		$orderby_map = array(
+			'id'     => 'id',
+			'amount' => 'amount',
+			'date'   => 'date_created',
+		);
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$orderby = isset( $_GET['orderby'] ) ? sanitize_key( wp_unslash( $_GET['orderby'] ) ) : '';
+		if ( isset( $orderby_map[ $orderby ] ) ) {
+			$args['orderby'] = $orderby_map[ $orderby ];
+			// phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$args['order'] = isset( $_GET['order'] ) && 'asc' === strtolower( sanitize_key( wp_unslash( $_GET['order'] ) ) ) ? 'ASC' : 'DESC';
 		}
 
 		return $args;
@@ -217,7 +267,7 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 	 * Prepare items.
 	 */
 	public function prepare_items() {
-		$this->_column_headers = array( $this->get_columns(), array(), array() );
+		$this->_column_headers = array( $this->get_columns(), array(), $this->get_sortable_columns() );
 
 		$per_page = 20;
 		$current  = $this->get_pagenum();
@@ -380,8 +430,17 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 	}
 
 	/**
-	 * Filter controls above the table: customer search, status, bank,
-	 * requested-by, and a date range.
+	 * Filter controls above the table. Split into two tiers: search + bank
+	 * + Filter/Export/Reset are always visible (the filters most people
+	 * reach for); receipt, requested-by, processed-by, amount range and
+	 * date range live behind an "Advanced filters" <details> toggle,
+	 * auto-expanded whenever one of them is already active so a filter
+	 * already in effect is never hidden from view. A native <details>
+	 * element rather than custom JS: every field inside it is still part
+	 * of the form and submits normally whether expanded or collapsed, and
+	 * it needs no enqueued script on a plugin with no build pipeline for
+	 * new admin JS (see the dashboard-widget class docblock for the same
+	 * reasoning elsewhere in this plugin).
 	 *
 	 * @param string $which 'top' | 'bottom'.
 	 */
@@ -389,69 +448,148 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 		if ( 'top' !== $which ) {
 			return;
 		}
-		// phpcs:disable WordPress.Security.NonceVerification.Recommended
-		$status       = isset( $_GET['withdrawal_status'] ) ? sanitize_key( wp_unslash( $_GET['withdrawal_status'] ) ) : '';
-		$search       = isset( $_GET['withdrawal_search'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_search'] ) ) : '';
-		if ( '' === $search && isset( $_GET['withdrawal_customer'] ) ) {
-			$search = sanitize_text_field( wp_unslash( $_GET['withdrawal_customer'] ) );
-		}
-		$bank         = isset( $_GET['withdrawal_bank'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_bank'] ) ) : '';
-		$receipt      = isset( $_GET['withdrawal_receipt'] ) ? sanitize_key( wp_unslash( $_GET['withdrawal_receipt'] ) ) : '';
-		$requested_by = isset( $_GET['withdrawal_requested_by'] ) ? sanitize_key( wp_unslash( $_GET['withdrawal_requested_by'] ) ) : '';
-		$processed_by = isset( $_GET['withdrawal_processed_by'] ) ? absint( $_GET['withdrawal_processed_by'] ) : 0;
-		$min_amount   = isset( $_GET['withdrawal_min_amount'] ) && '' !== trim( (string) $_GET['withdrawal_min_amount'] ) ? (float) $_GET['withdrawal_min_amount'] : null;
-		$max_amount   = isset( $_GET['withdrawal_max_amount'] ) && '' !== trim( (string) $_GET['withdrawal_max_amount'] ) ? (float) $_GET['withdrawal_max_amount'] : null;
-		$after        = isset( $_GET['withdrawal_after'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_after'] ) ) : '';
-		$before       = isset( $_GET['withdrawal_before'] ) ? sanitize_text_field( wp_unslash( $_GET['withdrawal_before'] ) ) : '';
-		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+		$raw = self::get_raw_filter_values();
 
-		$has_active_filters = ! empty( $status ) || ! empty( $search ) || ! empty( $bank ) || ! empty( $receipt ) || ! empty( $requested_by ) || ! empty( $processed_by ) || null !== $min_amount || null !== $max_amount || ! empty( $after ) || ! empty( $before );
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended
+		$orderby_map = array( 'id', 'amount', 'date' );
+		$orderby     = isset( $_GET['orderby'] ) ? sanitize_key( wp_unslash( $_GET['orderby'] ) ) : '';
+		$order       = isset( $_GET['order'] ) && 'asc' === strtolower( sanitize_key( wp_unslash( $_GET['order'] ) ) ) ? 'asc' : 'desc';
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+		$orderby = in_array( $orderby, $orderby_map, true ) ? $orderby : '';
+
+		$has_advanced_filters = '' !== $raw['receipt'] || '' !== $raw['requested_by'] || $raw['processed_by'] > 0
+			|| null !== $raw['min_amount'] || null !== $raw['max_amount'] || '' !== $raw['after'] || '' !== $raw['before'];
+		$has_active_filters = $has_advanced_filters || '' !== $raw['status'] || '' !== $raw['search'] || '' !== $raw['bank'];
 		$staff_members      = Woo_Wallet_Withdrawal::get_processing_staff();
 		?>
-		<div class="alignleft actions">
+		<style>
+			.woo-wallet-withdrawal-filters {
+				background: #fff;
+				padding: 10px;
+				border: 1px solid #ccd0d4;
+				border-radius: 4px;
+				margin-bottom: 8px;
+			}
+			.woo-wallet-withdrawal-filters form {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 8px;
+			}
+			.woo-wallet-withdrawal-filters__advanced {
+				flex-basis: 100%;
+				margin: 4px 0 0;
+				padding-top: 8px;
+				border-top: 1px solid #dcdcde;
+			}
+			.woo-wallet-withdrawal-filters__advanced summary {
+				cursor: pointer;
+				font-weight: 600;
+				color: #2271b1;
+			}
+			.woo-wallet-withdrawal-filters__advanced-fields {
+				display: flex;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 8px;
+				margin-top: 8px;
+			}
+			.woo-wallet-withdrawal-filters__date-label {
+				color: #646970;
+			}
+		</style>
+		<div class="alignleft actions woo-wallet-withdrawal-filters">
 			<form method="get">
 				<input type="hidden" name="page" value="woo-wallet-withdrawals" />
-				<?php if ( ! empty( $status ) ) : ?>
-					<input type="hidden" name="withdrawal_status" value="<?php echo esc_attr( $status ); ?>" />
+				<?php if ( '' !== $raw['status'] ) : ?>
+					<input type="hidden" name="withdrawal_status" value="<?php echo esc_attr( $raw['status'] ); ?>" />
 				<?php endif; ?>
-				<input type="search" name="withdrawal_search" value="<?php echo esc_attr( $search ); ?>" placeholder="<?php esc_attr_e( 'Customer, phone, account #, IBAN, ref...', 'woo-wallet' ); ?>" style="width: 240px;" />
+				<?php if ( '' !== $orderby ) : ?>
+					<input type="hidden" name="orderby" value="<?php echo esc_attr( $orderby ); ?>" />
+					<input type="hidden" name="order" value="<?php echo esc_attr( $order ); ?>" />
+				<?php endif; ?>
+
+				<input type="search" name="withdrawal_search" value="<?php echo esc_attr( $raw['search'] ); ?>" placeholder="<?php esc_attr_e( 'Customer, phone, account #, IBAN, ref...', 'woo-wallet' ); ?>" style="width: 240px;" />
 				<select name="withdrawal_bank">
 					<option value=""><?php esc_html_e( 'All banks', 'woo-wallet' ); ?></option>
 					<?php foreach ( Woo_Wallet_Withdrawal::get_configured_banks() as $bank_value => $bank_label ) : ?>
-						<option value="<?php echo esc_attr( $bank_value ); ?>" <?php selected( $bank, $bank_value ); ?>><?php echo esc_html( $bank_label ); ?></option>
+						<option value="<?php echo esc_attr( $bank_value ); ?>" <?php selected( $raw['bank'], $bank_value ); ?>><?php echo esc_html( $bank_label ); ?></option>
 					<?php endforeach; ?>
 				</select>
-				<select name="withdrawal_receipt">
-					<option value=""><?php esc_html_e( 'All receipts', 'woo-wallet' ); ?></option>
-					<option value="has" <?php selected( $receipt, 'has' ); ?>><?php esc_html_e( 'With receipt', 'woo-wallet' ); ?></option>
-					<option value="missing" <?php selected( $receipt, 'missing' ); ?>><?php esc_html_e( 'Missing receipt', 'woo-wallet' ); ?></option>
-				</select>
-				<select name="withdrawal_requested_by">
-					<option value=""><?php esc_html_e( 'All creators', 'woo-wallet' ); ?></option>
-					<option value="self" <?php selected( $requested_by, 'self' ); ?>><?php esc_html_e( 'Self-service only', 'woo-wallet' ); ?></option>
-					<option value="staff" <?php selected( $requested_by, 'staff' ); ?>><?php esc_html_e( 'Staff-logged only', 'woo-wallet' ); ?></option>
-				</select>
-				<?php if ( ! empty( $staff_members ) ) : ?>
-					<select name="withdrawal_processed_by">
-						<option value=""><?php esc_html_e( 'All processors', 'woo-wallet' ); ?></option>
-						<?php foreach ( $staff_members as $staff_id => $staff_name ) : ?>
-							<option value="<?php echo esc_attr( $staff_id ); ?>" <?php selected( $processed_by, $staff_id ); ?>>
-								<?php echo esc_html( sprintf( __( 'Processed by: %s', 'woo-wallet' ), $staff_name ) ); ?>
-							</option>
-						<?php endforeach; ?>
-					</select>
-				<?php endif; ?>
-				<input type="number" step="any" min="0" name="withdrawal_min_amount" value="<?php echo null !== $min_amount ? esc_attr( $min_amount ) : ''; ?>" placeholder="<?php esc_attr_e( 'Min amount', 'woo-wallet' ); ?>" style="width: 100px;" />
-				<input type="number" step="any" min="0" name="withdrawal_max_amount" value="<?php echo null !== $max_amount ? esc_attr( $max_amount ) : ''; ?>" placeholder="<?php esc_attr_e( 'Max amount', 'woo-wallet' ); ?>" style="width: 100px;" />
-				<input type="date" name="withdrawal_after" value="<?php echo esc_attr( $after ); ?>" title="<?php esc_attr_e( 'From date', 'woo-wallet' ); ?>" />
-				<input type="date" name="withdrawal_before" value="<?php echo esc_attr( $before ); ?>" title="<?php esc_attr_e( 'To date', 'woo-wallet' ); ?>" />
 				<?php submit_button( __( 'Filter', 'woo-wallet' ), '', 'filter_action', false ); ?>
-				<?php submit_button( __( 'Export CSV', 'woo-wallet' ), 'secondary', 'export_action', false, array( 'style' => 'margin-left: 4px;' ) ); ?>
+				<?php submit_button( __( 'Export CSV', 'woo-wallet' ), 'secondary', 'export_action', false ); ?>
 				<?php if ( $has_active_filters ) : ?>
-					<a href="<?php echo esc_url( admin_url( 'admin.php?page=woo-wallet-withdrawals' ) ); ?>" class="button" style="margin-left: 4px;"><?php esc_html_e( 'Reset', 'woo-wallet' ); ?></a>
+					<a href="<?php echo esc_url( admin_url( 'admin.php?page=woo-wallet-withdrawals' ) ); ?>" class="button"><?php esc_html_e( 'Reset', 'woo-wallet' ); ?></a>
 				<?php endif; ?>
+
+				<details class="woo-wallet-withdrawal-filters__advanced" <?php echo $has_advanced_filters ? 'open' : ''; ?>>
+					<summary><?php esc_html_e( 'Advanced filters', 'woo-wallet' ); ?></summary>
+					<div class="woo-wallet-withdrawal-filters__advanced-fields">
+						<select name="withdrawal_receipt">
+							<option value=""><?php esc_html_e( 'All receipts', 'woo-wallet' ); ?></option>
+							<option value="has" <?php selected( $raw['receipt'], 'has' ); ?>><?php esc_html_e( 'With receipt', 'woo-wallet' ); ?></option>
+							<option value="missing" <?php selected( $raw['receipt'], 'missing' ); ?>><?php esc_html_e( 'Missing receipt', 'woo-wallet' ); ?></option>
+						</select>
+						<select name="withdrawal_requested_by">
+							<option value=""><?php esc_html_e( 'All creators', 'woo-wallet' ); ?></option>
+							<option value="self" <?php selected( $raw['requested_by'], 'self' ); ?>><?php esc_html_e( 'Self-service only', 'woo-wallet' ); ?></option>
+							<option value="staff" <?php selected( $raw['requested_by'], 'staff' ); ?>><?php esc_html_e( 'Staff-logged only', 'woo-wallet' ); ?></option>
+						</select>
+						<?php if ( ! empty( $staff_members ) ) : ?>
+							<select name="withdrawal_processed_by">
+								<option value=""><?php esc_html_e( 'All processors', 'woo-wallet' ); ?></option>
+								<?php foreach ( $staff_members as $staff_id => $staff_name ) : ?>
+									<option value="<?php echo esc_attr( $staff_id ); ?>" <?php selected( $raw['processed_by'], $staff_id ); ?>>
+										<?php echo esc_html( sprintf( __( 'Processed by: %s', 'woo-wallet' ), $staff_name ) ); ?>
+									</option>
+								<?php endforeach; ?>
+							</select>
+						<?php endif; ?>
+						<input type="number" step="any" min="0" name="withdrawal_min_amount" value="<?php echo null !== $raw['min_amount'] ? esc_attr( $raw['min_amount'] ) : ''; ?>" placeholder="<?php esc_attr_e( 'Min amount', 'woo-wallet' ); ?>" style="width: 100px;" />
+						<input type="number" step="any" min="0" name="withdrawal_max_amount" value="<?php echo null !== $raw['max_amount'] ? esc_attr( $raw['max_amount'] ) : ''; ?>" placeholder="<?php esc_attr_e( 'Max amount', 'woo-wallet' ); ?>" style="width: 100px;" />
+						<span class="woo-wallet-withdrawal-filters__date-label"><?php esc_html_e( 'From:', 'woo-wallet' ); ?></span>
+						<input type="date" name="withdrawal_after" value="<?php echo esc_attr( $raw['after'] ); ?>" title="<?php esc_attr_e( 'From date', 'woo-wallet' ); ?>" />
+						<span class="woo-wallet-withdrawal-filters__date-label"><?php esc_html_e( 'To:', 'woo-wallet' ); ?></span>
+						<input type="date" name="withdrawal_before" value="<?php echo esc_attr( $raw['before'] ); ?>" title="<?php esc_attr_e( 'To date', 'woo-wallet' ); ?>" />
+					</div>
+				</details>
 			</form>
 		</div>
+		<?php
+	}
+
+	/**
+	 * Summary strip: total amount + count for the current filter — the
+	 * same filter shape prepare_items() already computed for the table
+	 * itself, just summed instead of paginated. Rendered by the caller
+	 * (Woo_Wallet_Withdrawal::render_admin_list()) between views() and
+	 * display(), same page but outside this table's own markup, since
+	 * WP_List_Table has no dedicated "above the table, below the tabs"
+	 * hook of its own.
+	 */
+	public function render_summary_totals() {
+		$args  = self::get_filter_args();
+		$total = false === $args ? 0 : Woo_Wallet_Withdrawal::count_requests( $args );
+		$sum   = false === $args ? 0.0 : Woo_Wallet_Withdrawal::sum_requests_amount( $args );
+		?>
+		<p class="woo-wallet-withdrawal-summary" style="margin: 8px 0; font-size: 14px;">
+			<span class="dashicons dashicons-chart-bar" style="vertical-align: middle;"></span>
+			<?php
+			printf(
+				/* translators: 1: total amount formatted as currency, 2: number of requests */
+				esc_html(
+					_n(
+						'Total amount for %2$d displayed request: %1$s',
+						'Total amount for %2$d displayed requests: %1$s',
+						$total,
+						'woo-wallet'
+					)
+				),
+				wp_kses_post( wc_price( $sum ) ),
+				(int) $total
+			);
+			?>
+		</p>
 		<?php
 	}
 }

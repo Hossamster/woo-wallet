@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.16
+Stable tag: 1.7.17
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,12 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.17 =
+* Improved - Reworked the admin Withdrawals list's filter bar: search, bank, Filter/Export/Reset stay visible; receipt, requested-by, processed-by, amount range and date range now live behind an "Advanced filters" toggle (auto-expanded when one of them is already active), so the bar no longer wraps into a crowded, unpredictable stack on narrower screens. The date-range fields also now have visible "From:"/"To:" labels instead of relying on a hover tooltip.
+* New - Sortable ID, Amount and Requested columns on the admin Withdrawals list (click a column header), safely whitelisted against real DB columns server-side.
+* New - A totals summary ("Total amount for N displayed requests: X") above the Withdrawals table, reflecting whatever filter is currently applied.
+* Dev - Extracted the admin Withdrawals list's $_GET-reading code (previously duplicated between the query-building and the filter-form rendering) into one shared method.
 
 = v1.7.16 =
 * New - Growth & Customer Insights section on the "Axfit Wallet" dashboard widget (Phase 4, completing the dashboard widget feature): dormant wallet balances (positive balance, no order in a configurable number of days — default 30, under Dashboard Widget Alerts), today's P2P transfer volume, cashback credited today, and wallet's share of today's checkout revenue.

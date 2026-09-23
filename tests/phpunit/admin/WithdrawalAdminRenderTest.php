@@ -240,4 +240,40 @@ class Withdrawal_Admin_Render_Test extends WP_UnitTestCase {
 		$this->assertArrayHasKey( 'processing', $views );
 		$this->assertStringContainsString( '(1)', $views['processing'] );
 	}
+
+	// -- list screen: summary totals + advanced filters ----------------------
+
+	public function test_list_screen_shows_the_summary_totals_for_the_current_filter() {
+		$this->seed_request( array( 'amount' => 100 ) );
+		$this->seed_request( array( 'amount' => 250 ) );
+		$this->seed_request( array( 'amount' => 999, 'status' => 'paid' ) ); // different status — excluded once filtered.
+
+		// Unfiltered: every request counted.
+		$html = $this->render_admin_page();
+		$this->assertStringContainsString( 'Total amount for 3 displayed requests', $html );
+
+		// Filtered to pending only: totals must reflect just those two —
+		// i.e. 350.00 (100 + 250), not 1349.00 (all three).
+		$_GET['withdrawal_status'] = 'pending';
+		$html                      = $this->render_admin_page();
+		$this->assertStringContainsString( 'Total amount for 2 displayed requests', $html );
+		$this->assertStringContainsString( '350.00', $html );
+	}
+
+	public function test_list_screen_advanced_filters_collapsed_by_default() {
+		$html = $this->render_admin_page();
+		$this->assertStringContainsString( 'class="woo-wallet-withdrawal-filters__advanced" >', $html );
+	}
+
+	public function test_list_screen_advanced_filters_expanded_when_an_advanced_filter_is_active() {
+		$_GET['withdrawal_min_amount'] = '50';
+		$html                          = $this->render_admin_page();
+		$this->assertStringContainsString( 'class="woo-wallet-withdrawal-filters__advanced" open>', $html );
+	}
+
+	public function test_list_screen_date_fields_have_visible_from_to_labels() {
+		$html = $this->render_admin_page();
+		$this->assertStringContainsString( 'From:', $html );
+		$this->assertStringContainsString( 'To:', $html );
+	}
 }

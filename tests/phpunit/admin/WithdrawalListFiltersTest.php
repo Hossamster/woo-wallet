@@ -259,4 +259,76 @@ class Withdrawal_List_Filters_Test extends WP_UnitTestCase {
 
 		$this->assertSame( array( $staff => 'Staff Member One' ), $result );
 	}
+
+	// -- get_requests(): orderby/order --------------------------------------
+
+	public function test_get_requests_defaults_to_id_descending() {
+		$a = $this->seed();
+		$b = $this->seed();
+		$c = $this->seed();
+
+		$this->assertSame( array( $c, $b, $a ), $this->ids( Woo_Wallet_Withdrawal::get_requests() ) );
+	}
+
+	public function test_get_requests_orders_by_amount() {
+		$low  = $this->seed( array( 'amount' => 10 ) );
+		$high = $this->seed( array( 'amount' => 500 ) );
+		$mid  = $this->seed( array( 'amount' => 100 ) );
+
+		$asc = $this->ids( Woo_Wallet_Withdrawal::get_requests( array( 'orderby' => 'amount', 'order' => 'ASC' ) ) );
+		$this->assertSame( array( $low, $mid, $high ), $asc );
+
+		$desc = $this->ids( Woo_Wallet_Withdrawal::get_requests( array( 'orderby' => 'amount', 'order' => 'DESC' ) ) );
+		$this->assertSame( array( $high, $mid, $low ), $desc );
+	}
+
+	public function test_get_requests_orders_by_date_created() {
+		$oldest = $this->seed( array( 'date_created' => '2026-01-01 00:00:00' ) );
+		$newest = $this->seed( array( 'date_created' => '2026-03-01 00:00:00' ) );
+		$middle = $this->seed( array( 'date_created' => '2026-02-01 00:00:00' ) );
+
+		$asc = $this->ids( Woo_Wallet_Withdrawal::get_requests( array( 'orderby' => 'date_created', 'order' => 'ASC' ) ) );
+		$this->assertSame( array( $oldest, $middle, $newest ), $asc );
+	}
+
+	/**
+	 * The whole point of whitelisting orderby against real column names in
+	 * build_order_by(): a value that isn't one of them must never reach the
+	 * SQL string, not even to silently degrade — it must fall back to the
+	 * safe default (id DESC) exactly as if no orderby had been given.
+	 */
+	public function test_get_requests_rejects_an_unknown_orderby_column() {
+		$a = $this->seed();
+		$b = $this->seed();
+
+		$injected = $this->ids(
+			Woo_Wallet_Withdrawal::get_requests(
+				array( 'orderby' => 'id; DROP TABLE wp_users; --' )
+			)
+		);
+		$this->assertSame( array( $b, $a ), $injected, 'An unrecognised orderby must fall back to the default id DESC, not error or apply attacker input.' );
+	}
+
+	public function test_get_requests_order_defaults_to_desc_for_an_unrecognised_value() {
+		$a = $this->seed();
+		$b = $this->seed();
+
+		$result = $this->ids( Woo_Wallet_Withdrawal::get_requests( array( 'orderby' => 'id', 'order' => 'sideways' ) ) );
+		$this->assertSame( array( $b, $a ), $result );
+	}
+
+	// -- sum_requests_amount() -----------------------------------------------
+
+	public function test_sum_requests_amount_totals_the_filtered_set() {
+		$this->seed( array( 'amount' => 100 ) );
+		$this->seed( array( 'amount' => 250 ) );
+		$this->seed( array( 'amount' => 50, 'status' => 'paid' ) );
+
+		$this->assertSame( 400.0, Woo_Wallet_Withdrawal::sum_requests_amount() );
+		$this->assertSame( 350.0, Woo_Wallet_Withdrawal::sum_requests_amount( array( 'status' => 'pending' ) ) );
+	}
+
+	public function test_sum_requests_amount_is_zero_with_no_matching_rows() {
+		$this->assertSame( 0.0, Woo_Wallet_Withdrawal::sum_requests_amount( array( 'status' => 'paid' ) ) );
+	}
 }
