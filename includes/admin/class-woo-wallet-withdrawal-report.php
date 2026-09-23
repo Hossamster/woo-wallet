@@ -234,11 +234,19 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 		if ( $raw['processed_by'] > 0 ) {
 			$args['processed_by'] = $raw['processed_by'];
 		}
-		if ( null !== $raw['min_amount'] && $raw['min_amount'] >= 0 ) {
-			$args['min_amount'] = $raw['min_amount'];
+		$min_amount = null !== $raw['min_amount'] && $raw['min_amount'] >= 0 ? $raw['min_amount'] : null;
+		$max_amount = null !== $raw['max_amount'] && $raw['max_amount'] >= 0 ? $raw['max_amount'] : null;
+		// An inverted range (e.g. min=1000, max=500, typed the wrong way
+		// round) would otherwise silently match zero rows with no
+		// indication why — swap rather than leave it impossible.
+		if ( null !== $min_amount && null !== $max_amount && $min_amount > $max_amount ) {
+			list( $min_amount, $max_amount ) = array( $max_amount, $min_amount );
 		}
-		if ( null !== $raw['max_amount'] && $raw['max_amount'] >= 0 ) {
-			$args['max_amount'] = $raw['max_amount'];
+		if ( null !== $min_amount ) {
+			$args['min_amount'] = $min_amount;
+		}
+		if ( null !== $max_amount ) {
+			$args['max_amount'] = $max_amount;
 		}
 		if ( '' !== $raw['after'] && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $raw['after'] ) ) {
 			$args['after'] = $raw['after'] . ' 00:00:00';
@@ -295,6 +303,21 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 			)
 		);
 
+		// column_default() calls get_userdata() per row for both 'customer'
+		// (user_id) and 'requested_by' (created_by, when staff-logged) —
+		// up to 40 extra queries per page load without this. Warm the user
+		// cache in one query instead; every get_userdata() call below then
+		// hits that cache.
+		$user_ids = array_filter(
+			array_merge(
+				wp_list_pluck( $this->items, 'user_id' ),
+				wp_list_pluck( $this->items, 'created_by' )
+			)
+		);
+		if ( function_exists( '_prime_user_caches' ) && ! empty( $user_ids ) ) {
+			_prime_user_caches( array_unique( array_map( 'absint', $user_ids ) ) );
+		}
+
 		$this->set_pagination_args(
 			array(
 				'total_items' => $total_items,
@@ -349,6 +372,40 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 	}
 
 	/**
+	 * The currency a row's amount is actually in: the row's own stored
+	 * currency, falling back to the store's *filtered* currency
+	 * (get_woocommerce_currency(), which multi-currency plugins like
+	 * Aelia/WPML/CURCY hook) rather than reading the raw
+	 * 'woocommerce_currency' option directly, which bypasses those filters
+	 * entirely.
+	 *
+	 * @param object $item Withdrawal row.
+	 * @return string
+	 */
+	private function resolve_currency( $item ) {
+		if ( ! empty( $item->currency ) ) {
+			return $item->currency;
+		}
+		return function_exists( 'get_woocommerce_currency' ) ? get_woocommerce_currency() : get_option( 'woocommerce_currency' );
+	}
+
+	/**
+	 * A value rendered with a small "copy to clipboard" button next to it —
+	 * for account numbers/IBANs, which staff routinely re-key into a bank
+	 * app or InstaPay by hand. The click handler is a single delegated
+	 * listener printed once in extra_tablenav(), not per row.
+	 *
+	 * @param string $value Value to display + copy.
+	 * @return string
+	 */
+	private function copyable_field( $value ) {
+		if ( '' === (string) $value ) {
+			return '';
+		}
+		return esc_html( $value ) . ' <button type="button" class="woo-wallet-copy-btn button-link" data-copy-value="' . esc_attr( $value ) . '" title="' . esc_attr__( 'Copy', 'woo-wallet' ) . '"><span class="dashicons dashicons-admin-page" style="font-size:14px;width:14px;height:14px;vertical-align:middle;"></span></button>';
+	}
+
+	/**
 	 * Default column rendering.
 	 *
 	 * @param object $item        Withdrawal row.
@@ -358,39 +415,49 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 	public function column_default( $item, $column_name ) {
 		switch ( $column_name ) {
 			case 'id':
-				return '<a href="' . esc_url( $this->detail_url( $item->id ) ) . '"><strong>#' . (int) $item->id . '</strong></a>';
+				$out = '<a href="' . esc_url( $this->detail_url( $item->id ) ) . '"><strong>#' . (int) $item->id . '</strong></a>';
+				if ( ! empty( $item->receipt_id ) && wp_get_attachment_url( $item->receipt_id ) ) {
+					$out .= ' <a href="' . esc_url( wp_get_attachment_url( $item->receipt_id ) ) . '" target="_blank" rel="noopener noreferrer" title="' . esc_attr__( 'Receipt attached — click to view', 'woo-wallet' ) . '"><span class="dashicons dashicons-paperclip" style="font-size:16px;width:16px;height:16px;vertical-align:middle;color:#2271b1;"></span></a>';
+				}
+				return $out;
 
 			case 'customer':
 				$user = get_userdata( $item->user_id );
-				$out  = $user ? esc_html( $user->user_email ) : '#' . (int) $item->user_id;
+				if ( $user ) {
+					$out  = '<a href="' . esc_url( get_edit_user_link( $user->ID ) ) . '"><strong>' . esc_html( $user->display_name ) . '</strong></a><br />';
+					$out .= '<span class="description">' . esc_html( $user->user_email ) . '</span><br />';
+					$out .= '<a href="' . esc_url( add_query_arg( array( 'page' => 'woo-wallet-transactions', 'user_id' => $user->ID ), admin_url( 'admin.php' ) ) ) . '">' . esc_html__( 'View wallet', 'woo-wallet' ) . '</a>';
+				} else {
+					$out = '#' . (int) $item->user_id;
+				}
 				if ( ! empty( $item->phone ) ) {
 					$out .= '<br /><span class="description" style="color:#50575e;font-size:12px;"><span class="dashicons dashicons-phone" style="font-size:13px;width:13px;height:13px;vertical-align:middle;"></span> ' . esc_html( $item->phone ) . '</span>';
 				}
 				return $out;
 
 			case 'amount':
-				$net    = wc_price( (float) $item->amount, array( 'currency' => $item->currency ? $item->currency : get_option( 'woocommerce_currency' ) ) );
-				$charge = (float) $item->charge;
-				$out    = wp_kses_post( $net );
+				$currency = $this->resolve_currency( $item );
+				$net      = wc_price( (float) $item->amount, array( 'currency' => $currency ) );
+				$charge   = (float) $item->charge;
+				$out      = wp_kses_post( $net );
 				if ( $charge > 0 ) {
 					$out .= '<br /><small>' . sprintf(
 						/* translators: %s: charge amount */
 						esc_html__( '+ %s charge', 'woo-wallet' ),
-						wp_kses_post( wc_price( $charge, array( 'currency' => $item->currency ? $item->currency : get_option( 'woocommerce_currency' ) ) ) )
+						wp_kses_post( wc_price( $charge, array( 'currency' => $currency ) ) )
 					) . '</small>';
 				}
 				return $out;
 
 			case 'bank':
+				// Phone already shown in the 'customer' column — repeating
+				// it here just duplicates space with no new information.
 				$lines   = array();
 				$lines[] = '<strong>' . esc_html( $item->bank_name ) . '</strong>';
 				$lines[] = esc_html( $item->beneficiary_name );
-				$lines[] = esc_html( $item->account_number );
-				if ( ! empty( $item->phone ) ) {
-					$lines[] = 'Tel: ' . esc_html( $item->phone );
-				}
+				$lines[] = $this->copyable_field( $item->account_number );
 				if ( ! empty( $item->iban ) ) {
-					$lines[] = 'IBAN: ' . esc_html( $item->iban );
+					$lines[] = 'IBAN: ' . $this->copyable_field( $item->iban );
 				}
 				return implode( '<br />', $lines );
 
@@ -459,8 +526,15 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 
 		$has_advanced_filters = '' !== $raw['receipt'] || '' !== $raw['requested_by'] || $raw['processed_by'] > 0
 			|| null !== $raw['min_amount'] || null !== $raw['max_amount'] || '' !== $raw['after'] || '' !== $raw['before'];
-		$has_active_filters = $has_advanced_filters || '' !== $raw['status'] || '' !== $raw['search'] || '' !== $raw['bank'];
-		$staff_members      = Woo_Wallet_Withdrawal::get_processing_staff();
+		// Deliberately excludes $raw['status'] — that's the status tab
+		// (get_views()), not something this form's own Reset button should
+		// touch. Reset clears search/bank/advanced filters and returns to
+		// whichever tab the admin is currently on, not back to "All".
+		$has_resettable_filters = $has_advanced_filters || '' !== $raw['search'] || '' !== $raw['bank'];
+		$reset_url              = '' !== $raw['status']
+			? add_query_arg( 'withdrawal_status', $raw['status'], admin_url( 'admin.php?page=woo-wallet-withdrawals' ) )
+			: admin_url( 'admin.php?page=woo-wallet-withdrawals' );
+		$staff_members = Woo_Wallet_Withdrawal::get_processing_staff();
 		?>
 		<style>
 			.woo-wallet-withdrawal-filters {
@@ -501,6 +575,7 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 		<div class="alignleft actions woo-wallet-withdrawal-filters">
 			<form method="get">
 				<input type="hidden" name="page" value="woo-wallet-withdrawals" />
+				<?php wp_nonce_field( Woo_Wallet_Withdrawal::EXPORT_NONCE_ACTION ); ?>
 				<?php if ( '' !== $raw['status'] ) : ?>
 					<input type="hidden" name="withdrawal_status" value="<?php echo esc_attr( $raw['status'] ); ?>" />
 				<?php endif; ?>
@@ -518,8 +593,8 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 				</select>
 				<?php submit_button( __( 'Filter', 'woo-wallet' ), '', 'filter_action', false ); ?>
 				<?php submit_button( __( 'Export CSV', 'woo-wallet' ), 'secondary', 'export_action', false ); ?>
-				<?php if ( $has_active_filters ) : ?>
-					<a href="<?php echo esc_url( admin_url( 'admin.php?page=woo-wallet-withdrawals' ) ); ?>" class="button"><?php esc_html_e( 'Reset', 'woo-wallet' ); ?></a>
+				<?php if ( $has_resettable_filters ) : ?>
+					<a href="<?php echo esc_url( $reset_url ); ?>" class="button"><?php esc_html_e( 'Reset', 'woo-wallet' ); ?></a>
 				<?php endif; ?>
 
 				<details class="woo-wallet-withdrawal-filters__advanced" <?php echo $has_advanced_filters ? 'open' : ''; ?>>
@@ -555,6 +630,25 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 				</details>
 			</form>
 		</div>
+		<script type="text/javascript">
+			jQuery(function ($) {
+				// One delegated listener for every .woo-wallet-copy-btn in the
+				// table (account numbers, IBANs), rather than binding per row.
+				$(document).on('click', '.woo-wallet-copy-btn', function (e) {
+					e.preventDefault();
+					var $btn  = $(this);
+					var value = String($btn.data('copyValue') || '');
+					if (navigator.clipboard && navigator.clipboard.writeText) {
+						navigator.clipboard.writeText(value);
+					}
+					var original = $btn.html();
+					$btn.html('<?php echo esc_js( __( 'Copied!', 'woo-wallet' ) ); ?>');
+					setTimeout(function () {
+						$btn.html(original);
+					}, 1200);
+				});
+			});
+		</script>
 		<?php
 	}
 

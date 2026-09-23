@@ -53,13 +53,34 @@ class Csv_Export_Test extends WP_UnitTestCase {
 		$this->assertSame( '', $output );
 	}
 
-	public function test_denies_a_user_without_capability() {
+	/**
+	 * A logged-in admin's browser visiting an attacker page containing
+	 * `<img src="…admin.php?page=woo-wallet-withdrawals&export_action=1">`
+	 * (or any other auto-firing GET) must not download the CSV — this is
+	 * exactly the CSRF gap fixed by adding check_admin_referer() ahead of
+	 * the capability check. No nonce is set here on purpose.
+	 */
+	public function test_denies_a_request_without_a_valid_nonce() {
+		$_GET = array(
+			'page'          => 'woo-wallet-withdrawals',
+			'export_action' => '1',
+		);
+		$admin_id = self::factory()->user->create();
+		get_userdata( $admin_id )->add_cap( 'manage_woocommerce' );
+		wp_set_current_user( $admin_id );
+
+		$this->expectException( 'WPDieException' );
+		$this->withdrawal->maybe_handle_admin_csv_export();
+	}
+
+	public function test_denies_a_valid_nonce_without_capability() {
 		$_GET = array(
 			'page'          => 'woo-wallet-withdrawals',
 			'export_action' => '1',
 		);
 		$plain_user = self::factory()->user->create();
 		wp_set_current_user( $plain_user );
+		$_GET['_wpnonce'] = wp_create_nonce( Woo_Wallet_Withdrawal::EXPORT_NONCE_ACTION );
 
 		$this->expectException( 'WPDieException' );
 		$this->withdrawal->maybe_handle_admin_csv_export();

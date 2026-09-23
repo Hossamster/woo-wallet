@@ -141,6 +141,32 @@ class Withdrawal_Filter_Args_Test extends WP_UnitTestCase {
 		$this->assertArrayNotHasKey( 'max_amount', $args );
 	}
 
+	/**
+	 * min=1000, max=500 typed the wrong way round would otherwise silently
+	 * match zero rows (amount >= 1000 AND amount <= 500 can never be true)
+	 * with no indication to the admin why the table went empty — swap
+	 * instead of leaving the range impossible.
+	 */
+	public function test_an_inverted_min_max_range_is_swapped() {
+		$_GET = array(
+			'withdrawal_min_amount' => '1000',
+			'withdrawal_max_amount' => '500',
+		);
+		$args = Woo_Wallet_Withdrawal_Report::get_filter_args();
+		$this->assertSame( 500.0, $args['min_amount'] );
+		$this->assertSame( 1000.0, $args['max_amount'] );
+	}
+
+	public function test_a_correctly_ordered_min_max_range_is_left_alone() {
+		$_GET = array(
+			'withdrawal_min_amount' => '50',
+			'withdrawal_max_amount' => '200',
+		);
+		$args = Woo_Wallet_Withdrawal_Report::get_filter_args();
+		$this->assertSame( 50.0, $args['min_amount'] );
+		$this->assertSame( 200.0, $args['max_amount'] );
+	}
+
 	// -- date range --------------------------------------------------------
 
 	public function test_date_filters_require_ymd_format_and_get_time_bounds_appended() {

@@ -151,7 +151,61 @@ class Withdrawal_Admin_Render_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( '01012345678', $html );
 	}
 
-	public function test_column_bank_combines_bank_beneficiary_account_phone_and_iban() {
+	/**
+	 * Previously the customer column showed only an email address — the
+	 * display name was dropped entirely, and there was no way to reach the
+	 * customer's user profile or their wallet transaction history without
+	 * leaving the Withdrawals screen and searching manually.
+	 */
+	public function test_column_customer_shows_the_display_name_and_links_to_profile_and_wallet() {
+		$row   = $this->seed_request();
+		$table = new Woo_Wallet_Withdrawal_Report();
+		$html  = $table->column_default( $row, 'customer' );
+
+		$this->assertStringContainsString( 'Mohamed Ali', $html );
+		$this->assertStringContainsString( esc_url( get_edit_user_link( $this->customer_id ) ), $html );
+		$this->assertStringContainsString( 'user_id=' . $this->customer_id, $html );
+		$this->assertStringContainsString( 'page=woo-wallet-transactions', $html );
+		$this->assertStringContainsString( 'View wallet', $html );
+	}
+
+	public function test_column_customer_falls_back_to_the_bare_id_for_a_deleted_user() {
+		// wp_delete_user() lives in wp-admin/includes/user.php, only loaded
+		// on real wp-admin requests — not pulled in by the CLI bootstrap.
+		if ( ! function_exists( 'wp_delete_user' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/user.php';
+		}
+		$deleted_user_id = self::factory()->user->create();
+		$row             = $this->seed_request( array( 'user_id' => $deleted_user_id, 'created_by' => $deleted_user_id ) );
+		wp_delete_user( $deleted_user_id );
+
+		$table = new Woo_Wallet_Withdrawal_Report();
+		$html  = $table->column_default( $row, 'customer' );
+
+		$this->assertStringContainsString( '#' . $deleted_user_id, $html );
+	}
+
+	// -- 'id' column: receipt badge --------------------------------------
+
+	public function test_column_id_shows_a_receipt_badge_when_a_receipt_is_attached() {
+		$attachment_id = self::factory()->attachment->create_object( array( 'post_mime_type' => 'application/pdf' ) );
+		$row           = $this->seed_request( array( 'receipt_id' => $attachment_id ) );
+		$table         = new Woo_Wallet_Withdrawal_Report();
+		$html          = $table->column_default( $row, 'id' );
+
+		$this->assertStringContainsString( 'dashicons-paperclip', $html );
+		$this->assertStringContainsString( esc_url( wp_get_attachment_url( $attachment_id ) ), $html );
+	}
+
+	public function test_column_id_has_no_receipt_badge_without_a_receipt() {
+		$row   = $this->seed_request(); // receipt_id defaults to 0.
+		$table = new Woo_Wallet_Withdrawal_Report();
+		$html  = $table->column_default( $row, 'id' );
+
+		$this->assertStringNotContainsString( 'dashicons-paperclip', $html );
+	}
+
+	public function test_column_bank_combines_bank_beneficiary_account_and_iban() {
 		$row   = $this->seed_request(
 			array(
 				'beneficiary_name' => 'Combined Field Test',
@@ -164,8 +218,29 @@ class Withdrawal_Admin_Render_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( $row->bank_name, $html );
 		$this->assertStringContainsString( 'Combined Field Test', $html );
 		$this->assertStringContainsString( '1234567890', $html );
-		$this->assertStringContainsString( '01099998888', $html );
 		$this->assertStringContainsString( 'EG380019000500000000263180002', $html );
+	}
+
+	/**
+	 * Phone is already shown in the 'customer' column (see
+	 * test_column_customer_shows_name_email_and_phone_with_links below) —
+	 * repeating it in 'bank' was pure duplication, removed deliberately.
+	 */
+	public function test_column_bank_does_not_repeat_the_phone_number() {
+		$row   = $this->seed_request( array( 'phone' => '01099998888' ) );
+		$table = new Woo_Wallet_Withdrawal_Report();
+		$html  = $table->column_default( $row, 'bank' );
+		$this->assertStringNotContainsString( '01099998888', $html );
+	}
+
+	public function test_column_bank_account_number_and_iban_have_copy_buttons() {
+		$row   = $this->seed_request( array( 'iban' => 'EG380019000500000000263180002' ) );
+		$table = new Woo_Wallet_Withdrawal_Report();
+		$html  = $table->column_default( $row, 'bank' );
+
+		$this->assertStringContainsString( 'woo-wallet-copy-btn', $html );
+		$this->assertStringContainsString( 'data-copy-value="1234567890"', $html );
+		$this->assertStringContainsString( 'data-copy-value="EG380019000500000000263180002"', $html );
 	}
 
 	public function test_column_bank_omits_iban_when_blank() {
@@ -275,5 +350,47 @@ class Withdrawal_Admin_Render_Test extends WP_UnitTestCase {
 		$html = $this->render_admin_page();
 		$this->assertStringContainsString( 'From:', $html );
 		$this->assertStringContainsString( 'To:', $html );
+	}
+
+	/**
+	 * Previously Reset always linked to the bare list URL, dropping the
+	 * status tab the admin was on (e.g. Pending) back to "All" along with
+	 * the actual filters. It must now keep the tab and only offer to clear
+	 * the search/bank/advanced filters.
+	 */
+	public function test_reset_link_preserves_the_current_status_tab() {
+		$_GET['withdrawal_status'] = 'pending';
+		$_GET['withdrawal_bank']   = array_key_first( Woo_Wallet_Withdrawal::get_configured_banks() );
+		$html                      = $this->render_admin_page();
+
+		$this->assertMatchesRegularExpression( '/href="[^"]*withdrawal_status=pending[^"]*"[^>]*>Reset/', $html );
+	}
+
+	public function test_reset_link_is_not_shown_when_only_the_status_tab_is_active() {
+		$_GET['withdrawal_status'] = 'pending';
+		$html                      = $this->render_admin_page();
+		$this->assertDoesNotMatchRegularExpression( '/>Reset</', $html );
+	}
+
+	public function test_export_csv_button_form_includes_a_nonce_field() {
+		$html = $this->render_admin_page();
+		$this->assertStringContainsString( 'name="_wpnonce"', $html );
+	}
+
+	// -- N+1 query fix: primed user cache -------------------------------
+
+	public function test_prepare_items_primes_the_user_cache_for_customers_and_staff() {
+		$staff = self::factory()->user->create( array( 'display_name' => 'Priming Staff' ) );
+		$this->seed_request( array( 'created_by' => $staff ) );
+
+		$table = new Woo_Wallet_Withdrawal_Report();
+		$table->prepare_items();
+
+		// If prepare_items() primed the cache, get_userdata() for both ids
+		// resolves from the object cache without a fresh DB round trip —
+		// checked directly via wp_cache_get() rather than counting queries,
+		// which would be too fragile against unrelated query-count changes.
+		$this->assertNotFalse( wp_cache_get( $this->customer_id, 'users' ) );
+		$this->assertNotFalse( wp_cache_get( $staff, 'users' ) );
 	}
 }

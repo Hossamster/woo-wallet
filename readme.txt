@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.17
+Stable tag: 1.7.18
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,17 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.18 =
+* Security - Fixed a CSRF gap in the admin Withdrawals "Export CSV" button: it had a capability check but no nonce, so a logged-in admin's browser could be made to download every requester's bank name, account number, IBAN and phone number just by loading an attacker-controlled page (e.g. an `<img>` tag pointing at the export URL). The filter form now carries a nonce, verified before the export runs.
+* Improved - The Customer column on the Withdrawals list now shows the customer's name (not just their email/ID), and links to their user profile and their wallet transaction history — previously reaching either meant leaving the screen to search manually.
+* Improved - Pending requests with an attached receipt now show a small paperclip badge (linking straight to it) in the ID column, so staff working a review queue don't have to open every request to see which ones already have one.
+* Improved - Account numbers and IBANs on the Withdrawals list now have a one-click copy button.
+* Fix - The customer's phone number was shown twice per row (Customer and Bank details columns); it now shows once.
+* Fix - The amount column now respects multi-currency plugins' currency filters instead of reading the raw `woocommerce_currency` option directly.
+* Fix - The Withdrawals list's Reset link used to drop the current status tab (e.g. Pending) back to "All"; it now stays on the current tab and only clears the search/advanced filters.
+* Fix - An inverted amount filter (min greater than max) used to silently match zero rows with no indication why; it's now swapped automatically.
+* Dev - The Withdrawals list now primes the user cache for every row's customer and staff member in one query up front, instead of up to ~40 extra `get_userdata()` queries per page load.
 
 = v1.7.17 =
 * Improved - Reworked the admin Withdrawals list's filter bar: search, bank, Filter/Export/Reset stay visible; receipt, requested-by, processed-by, amount range and date range now live behind an "Advanced filters" toggle (auto-expanded when one of them is already active), so the bar no longer wraps into a crowded, unpredictable stack on narrower screens. The date-range fields also now have visible "From:"/"To:" labels instead of relying on a hover tooltip.

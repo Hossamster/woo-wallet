@@ -940,6 +940,18 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
+		 * check_admin_referer()/wp_nonce_field() action name for the "Export
+		 * CSV" button on the Withdrawals filter form — without this, a GET
+		 * request to `admin.php?page=woo-wallet-withdrawals&export_action=1`
+		 * downloaded every requester's bank name, account number, IBAN and
+		 * phone number for a logged-in admin who merely visited an attacker
+		 * page containing that URL (an <img> tag is enough to fire a GET).
+		 *
+		 * @var string
+		 */
+		const EXPORT_NONCE_ACTION = 'woo-wallet-withdrawals-export';
+
+		/**
 		 * Handle admin CSV export request.
 		 */
 		public function maybe_handle_admin_csv_export() {
@@ -949,6 +961,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			if ( empty( $_GET['export_action'] ) ) {
 				return;
 			}
+			check_admin_referer( self::EXPORT_NONCE_ACTION );
 			if ( ! current_user_can( get_wallet_user_capability() ) ) {
 				wp_die( esc_html__( 'You do not have permission to export this data.', 'woo-wallet' ) );
 			}
