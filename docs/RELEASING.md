@@ -22,7 +22,8 @@ Checker](https://github.com/YahnisElsts/plugin-update-checker) library
 3. **Commit and push** those changes to `main` as usual. Still no update shown to anyone yet — this is the same as any other push.
 4. **Create a GitHub Release**:
    - Go to the repo → **Releases** → **Draft a new release**.
-   - Create a new tag matching the version, e.g. `v1.7.9` (the `v` prefix is optional, either works).
+   - Create a new tag matching the version, e.g. `v1.7.9`. Use a **lowercase** `v` (or no prefix) — the update checker strips only a lowercase `v` from tag names.
+   - **The tag must point at a commit whose `woo-wallet.php` already says that same version.** Sites decide whether an update exists by reading the `Version:` header from the *tagged commit*, and that header takes precedence over the tag/Release name. A `v1.8.0` tag on a commit still reading `Version: 1.7.19` shows sites nothing — they see "latest is 1.7.19". So finish step 1 and step 3 (bump, commit, push) *before* creating the Release, never after.
    - Target: `main`, at the commit you just pushed in step 3.
    - Title/description: whatever you like — the description is shown to site admins when they click "View version details" in wp-admin.
    - **Do not** check "Set as a pre-release" — Plugin Update Checker ignores pre-releases by design.
