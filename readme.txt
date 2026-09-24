@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.7.18
+Stable tag: 1.7.19
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,9 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.7.19 =
+* Improved - De-duplicated the dashboard widget: pending withdrawals no longer appear twice (alert + a separate stat tile — the alert, which links to the review screen, stays); the negative net-flow alert now states the outflow-to-inflow ratio instead of repeating the amounts the tiles right below it already show; and the Inflow/Outflow tile labels no longer repeat the period the active tab already names.
 
 = v1.7.18 =
 * Security - Fixed a CSRF gap in the admin Withdrawals "Export CSV" button: it had a capability check but no nonce, so a logged-in admin's browser could be made to download every requester's bank name, account number, IBAN and phone number just by loading an attacker-controlled page (e.g. an `<img>` tag pointing at the export URL). The filter form now carries a nonce, verified before the export runs.

@@ -137,4 +137,105 @@ class Dashboard_Widget_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( '42', $output );
 		$this->assertStringContainsString( 'waiting for review', $output );
 	}
+
+	/**
+	 * The pending amount used to appear twice — once in the alert banner,
+	 * once as its own stat tile. The banner is the actionable one (it
+	 * links to the review screen), so the tile was dropped.
+	 */
+	public function test_render_shows_the_pending_withdrawal_amount_only_once() {
+		global $wpdb;
+		$admin_id    = $this->create_admin();
+		$customer_id = self::factory()->user->create();
+		$wpdb->insert(
+			$wpdb->base_prefix . 'woo_wallet_withdrawals',
+			array(
+				'user_id'      => $customer_id,
+				'amount'       => 4242,
+				'status'       => 'pending',
+				'date_created' => current_time( 'mysql' ),
+			)
+		);
+		wp_set_current_user( $admin_id );
+
+		ob_start();
+		( new Woo_Wallet_Dashboard_Widget() )->render();
+		$output = ob_get_clean();
+
+		$this->assertSame( 1, substr_count( $output, '4,242.00' ) );
+	}
+
+	/**
+	 * The net-flow alert used to restate the outflow and inflow amounts
+	 * that the two tiles directly beneath it already show. It should say
+	 * something the tiles don't: the ratio between them.
+	 */
+	public function test_net_flow_alert_states_the_ratio_instead_of_repeating_the_amounts() {
+		global $wpdb;
+		$admin_id = $this->create_admin();
+		$user_id  = self::factory()->user->create();
+		$today    = current_time( 'Y-m-d' );
+		foreach ( array( array( 'debit', 777 ), array( 'credit', 259 ) ) as $row ) {
+			$wpdb->insert(
+				$wpdb->base_prefix . 'woo_wallet_transactions',
+				array(
+					'user_id'  => $user_id,
+					'type'     => $row[0],
+					'category' => 'other',
+					'amount'   => $row[1],
+					'currency' => 'USD',
+					'deleted'  => 0,
+					'date'     => $today . ' 10:00:00',
+				)
+			);
+		}
+		wp_set_current_user( $admin_id );
+
+		ob_start();
+		( new Woo_Wallet_Dashboard_Widget() )->render();
+		$output = ob_get_clean();
+
+		// 777 / 259 = 300% — stated in the alert.
+		$this->assertStringContainsString( '300</strong>% of inflow', $output );
+		$this->assertStringContainsString( 'alert threshold', $output );
+		// Each amount appears exactly once (its own tile), not again in the alert.
+		$this->assertSame( 1, substr_count( $output, '777.00' ) );
+		$this->assertSame( 1, substr_count( $output, '259.00' ) );
+	}
+
+	public function test_net_flow_alert_with_no_inflow_says_so_instead_of_dividing_by_zero() {
+		global $wpdb;
+		$admin_id = $this->create_admin();
+		$wpdb->insert(
+			$wpdb->base_prefix . 'woo_wallet_transactions',
+			array(
+				'user_id'  => self::factory()->user->create(),
+				'type'     => 'debit',
+				'category' => 'other',
+				'amount'   => 50,
+				'currency' => 'USD',
+				'deleted'  => 0,
+				'date'     => current_time( 'Y-m-d' ) . ' 10:00:00',
+			)
+		);
+		wp_set_current_user( $admin_id );
+
+		ob_start();
+		( new Woo_Wallet_Dashboard_Widget() )->render();
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'with nothing coming in', $output );
+	}
+
+	public function test_stat_labels_do_not_repeat_the_period_shown_by_the_active_tab() {
+		$admin_id = $this->create_admin();
+		wp_set_current_user( $admin_id );
+
+		ob_start();
+		( new Woo_Wallet_Dashboard_Widget() )->render();
+		$output = ob_get_clean();
+
+		$this->assertStringNotContainsString( 'Inflow (', $output );
+		$this->assertStringNotContainsString( 'Outflow (', $output );
+	}
 }

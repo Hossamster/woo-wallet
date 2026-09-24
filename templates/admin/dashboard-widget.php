@@ -106,6 +106,9 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 		border-radius: 3px;
 		padding: 8px 10px;
 	}
+	.woo-wallet-dashboard-widget .twdw-stat--wide {
+		grid-column: 1 / -1;
+	}
 	.woo-wallet-dashboard-widget .twdw-stat__label {
 		display: block;
 		font-size: 11px;
