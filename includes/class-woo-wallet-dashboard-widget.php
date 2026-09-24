@@ -1,7 +1,14 @@
 <?php
 /**
- * Native WordPress admin-dashboard widget (wp-admin/index.php) for wallet
- * financial health, actionable alerts, and quick actions.
+ * Wallet overview panel — embedded in the plugin's own Reports page
+ * (`admin.php?page=woo-wallet`) as a persistent header section above
+ * the liability tabs.
+ *
+ * Previously registered via wp_add_dashboard_widget() on the WordPress
+ * main dashboard (wp-admin/index.php). Moved here so the financial
+ * overview lives where operators already go to manage the wallet, rather
+ * than competing with WooCommerce's own dashboard widgets on a page that
+ * most store managers visit only briefly.
  *
  * Self-contained module, same shape as class-woo-wallet-withdrawal.php:
  * registers its own hooks in the constructor and self-instantiates at the
@@ -10,14 +17,11 @@
  * frontend or on AJAX-only requests.
  *
  * Markup/inline styles live in templates/admin/dashboard-widget.php, same
- * convention as templates/woo-wallet-partial-payment.php — this plugin has
- * no working build pipeline for new compiled assets in this checkout (no
- * package.json / webpack config / src/ present, only pre-built output under
- * build/), so small admin-only UI here is plain inline CSS/JS in the
- * template rather than a new enqueued bundle.
+ * convention as templates/woo-wallet-partial-payment.php.
  *
  * @package StandaleneTech
  * @since   1.7.12
+ * @since   1.7.17 Moved from wp-admin dashboard to the plugin Reports page.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -50,41 +54,28 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 		 * Class constructor.
 		 */
 		public function __construct() {
-			add_action( 'wp_dashboard_setup', array( $this, 'register_widget' ) );
+			// Render the overview panel at the top of the Reports page.
+			add_action( 'woo_wallet_reports_page_top', array( $this, 'render' ) );
+			// AJAX: period-tab refresh, quick credit.
 			add_action( 'wp_ajax_woo_wallet_dashboard_widget_refresh', array( $this, 'ajax_refresh' ) );
 			add_action( 'wp_ajax_woo_wallet_dashboard_widget_quick_credit', array( $this, 'ajax_quick_credit' ) );
+			// admin-post: Export Today's Statement download link.
 			add_action( 'admin_post_woo_wallet_dashboard_export_today', array( $this, 'handle_export_today' ) );
+			// Enqueue wc-backbone-modal on the wallet Reports screen.
 			add_action( 'admin_enqueue_scripts', array( $this, 'admin_enqueue_scripts' ) );
 		}
 
 		/**
-		 * Enqueue wc-backbone-modal for the Quick Credit modal, Dashboard
-		 * screen only — same scoped-enqueue pattern as
-		 * Woo_Wallet_Withdrawal::admin_enqueue_scripts() for its own
-		 * customer-search modal assets.
+		 * Enqueue wc-backbone-modal for the Quick Credit modal.
+		 * Scoped to the wallet Reports screen (`toplevel_page_woo-wallet`)
+		 * — same pattern as Woo_Wallet_Withdrawal::admin_enqueue_scripts().
 		 */
 		public function admin_enqueue_scripts() {
 			$screen = get_current_screen();
-			if ( ! $screen || 'dashboard' !== $screen->id ) {
+			if ( ! $screen || 'toplevel_page_woo-wallet' !== $screen->id ) {
 				return;
 			}
 			wp_enqueue_script( 'wc-backbone-modal' );
-		}
-
-		/**
-		 * Register the widget — gated on the same capability every other
-		 * wallet admin screen uses, so a user who can't manage the wallet
-		 * doesn't even see it offered on their dashboard.
-		 */
-		public function register_widget() {
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
-				return;
-			}
-			wp_add_dashboard_widget(
-				self::WIDGET_ID,
-				__( 'Axfit Wallet', 'woo-wallet' ),
-				array( $this, 'render' )
-			);
 		}
 
 		/**

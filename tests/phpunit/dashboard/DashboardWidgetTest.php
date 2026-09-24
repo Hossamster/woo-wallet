@@ -1,45 +1,29 @@
 <?php
 /**
- * Woo_Wallet_Dashboard_Widget — widget registration + rendering.
+ * Woo_Wallet_Dashboard_Widget — rendering + hook registration.
  *
- * This is the first thing that registers on wp_dashboard_setup in this
- * plugin — nothing else did before, so there's no prior art to copy for
- * "does it actually show up". These tests prove: the widget is offered to a
- * user with the wallet capability, is NOT offered to one without it (same
- * gate as every other admin screen, via get_wallet_user_capability()), and
- * render() produces real output (the Phase 1 Financial Health Snapshot,
- * backed by Woo_Wallet_Dashboard_Widget_Data — see DashboardWidgetDataTest
- * for the aggregate-query coverage) rather than a fatal/blank screen.
+ * The overview panel was previously registered as a wp-admin Dashboard
+ * widget (wp-admin/index.php). It now hooks onto `woo_wallet_reports_page_top`
+ * and is embedded in the plugin's own Reports page (`admin.php?page=woo-wallet`).
+ *
+ * These tests prove:
+ *   - render() produces output containing the Financial Health Snapshot
+ *     markup (backed by Woo_Wallet_Dashboard_Widget_Data).
+ *   - render() returns nothing for a user without the wallet capability.
+ *   - The hook is woo_wallet_reports_page_top (not wp_dashboard_setup).
  */
 class Dashboard_Widget_Test extends WP_UnitTestCase {
 
 	public function set_up() {
 		parent::set_up();
-		// wp_add_dashboard_widget() lives in wp-admin/includes/dashboard.php,
-		// which is only loaded on real wp-admin requests — the PHPUnit
-		// bootstrap doesn't pull it in, so a CLI test needs it explicitly.
-		if ( ! function_exists( 'wp_add_dashboard_widget' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/dashboard.php';
-		}
 		if ( ! function_exists( 'set_current_screen' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/screen.php';
 		}
-		// wp_add_dashboard_widget() -> add_meta_box() keys $wp_meta_boxes by
-		// get_current_screen()->id and silently no-ops (returns early, no
-		// error) when there's no current screen — true on the CLI bootstrap,
-		// never true on a real wp-admin request. Set it explicitly, the same
-		// way WP core's own dashboard-widget tests do.
-		set_current_screen( 'dashboard' );
-		// Only loaded by the plugin when is_request('admin') is true (see
-		// Woo_Wallet::includes() / includes/class-woo-wallet.php) — never
-		// autoloaded on the frontend/AJAX/CLI test bootstrap, so a test that
-		// never boots a real wp-admin request must load it explicitly.
+		// Load the module the same way Woo_Wallet::includes() would on an
+		// admin request (is_request('admin') branch).
 		if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 			require_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-dashboard-widget.php';
 		}
-
-		global $wp_meta_boxes;
-		$wp_meta_boxes = array();
 	}
 
 	public function tear_down() {
@@ -47,20 +31,11 @@ class Dashboard_Widget_Test extends WP_UnitTestCase {
 		parent::tear_down();
 	}
 
-	private function register_widget_as( $user_id ) {
-		wp_set_current_user( $user_id );
-		$widget = new Woo_Wallet_Dashboard_Widget();
-		$widget->register_widget();
-		return $widget;
-	}
-
 	/**
 	 * The 'administrator' role only has manage_woocommerce when
 	 * WC_Install::create_roles() has run against this test database — not
-	 * guaranteed on a fresh CI database. Every other test in this suite
-	 * grants the exact capability it needs explicitly (see
-	 * WalletAjaxNonceTest) rather than relying on the role; do the same
-	 * here instead of assuming 'administrator' implies it.
+	 * guaranteed on a fresh CI database. Grant the exact capability needed
+	 * explicitly rather than relying on the role implying it.
 	 */
 	private function create_admin() {
 		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
@@ -68,32 +43,37 @@ class Dashboard_Widget_Test extends WP_UnitTestCase {
 		return $user_id;
 	}
 
-	public function test_widget_registers_for_a_user_with_the_wallet_capability() {
-		$admin_id = $this->create_admin();
+	/**
+	 * The overview panel now hooks onto woo_wallet_reports_page_top, NOT
+	 * wp_dashboard_setup — verify the action is wired up when the class loads.
+	 */
+	public function test_overview_panel_hooks_onto_reports_page_top() {
+		$widget = new Woo_Wallet_Dashboard_Widget();
 
-		$this->register_widget_as( $admin_id );
-
-		global $wp_meta_boxes;
-		$this->assertArrayHasKey(
-			Woo_Wallet_Dashboard_Widget::WIDGET_ID,
-			$wp_meta_boxes['dashboard']['normal']['core'] ?? array(),
-			'A user with manage_woocommerce must be offered the widget.'
+		$this->assertGreaterThan(
+			0,
+			has_action( 'woo_wallet_reports_page_top', array( $widget, 'render' ) ),
+			'render() must be hooked onto woo_wallet_reports_page_top.'
 		);
 	}
 
-	public function test_widget_does_not_register_for_a_user_without_the_wallet_capability() {
-		$subscriber_id = self::factory()->user->create( array( 'role' => 'subscriber' ) );
+	/**
+	 * The panel must NOT hook onto wp_dashboard_setup any more — its place is
+	 * the plugin Reports page, not the WordPress main dashboard.
+	 */
+	public function test_overview_panel_does_not_register_on_wp_dashboard_setup() {
+		$widget = new Woo_Wallet_Dashboard_Widget();
 
-		$this->register_widget_as( $subscriber_id );
-
-		global $wp_meta_boxes;
-		$this->assertArrayNotHasKey(
-			Woo_Wallet_Dashboard_Widget::WIDGET_ID,
-			$wp_meta_boxes['dashboard']['normal']['core'] ?? array(),
-			'A user without manage_woocommerce must not see the widget offered at all.'
+		$this->assertFalse(
+			has_action( 'wp_dashboard_setup', array( $widget, 'register_widget' ) ),
+			'register_widget() must no longer be hooked onto wp_dashboard_setup.'
 		);
 	}
 
+	/**
+	 * render() must produce Financial Health Snapshot markup for a user who
+	 * holds the wallet capability.
+	 */
 	public function test_render_outputs_the_snapshot_body_with_no_fatal() {
 		$admin_id = $this->create_admin();
 		wp_set_current_user( $admin_id );
@@ -109,9 +89,30 @@ class Dashboard_Widget_Test extends WP_UnitTestCase {
 	}
 
 	/**
+	 * render() must return nothing (empty output) for a user without the
+	 * wallet capability — the capability check is in the template itself.
+	 */
+	public function test_render_is_empty_for_a_user_without_wallet_capability() {
+		$subscriber_id = self::factory()->user->create( array( 'role' => 'subscriber' ) );
+		wp_set_current_user( $subscriber_id );
+
+		$widget = new Woo_Wallet_Dashboard_Widget();
+
+		ob_start();
+		$widget->render();
+		$output = ob_get_clean();
+
+		$this->assertStringNotContainsString(
+			'woo-wallet-dashboard-widget',
+			$output,
+			'A user without manage_woocommerce must see no overview panel output.'
+		);
+	}
+
+	/**
 	 * Proves render() actually reaches the data service and reflects real
-	 * ledger/withdrawal state, not just static markup — a pending
-	 * withdrawal's amount must show up formatted in the output.
+	 * ledger/withdrawal state — a pending withdrawal's amount must show up
+	 * formatted in the output.
 	 */
 	public function test_render_reflects_a_pending_withdrawal() {
 		global $wpdb;

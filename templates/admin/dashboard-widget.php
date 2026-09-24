@@ -1,16 +1,19 @@
 <?php
 /**
- * Admin View: wp-admin dashboard widget — wallet financial snapshot shell.
+ * Admin View: wallet overview panel — rendered at the top of the plugin's
+ * own Reports page (`admin.php?page=woo-wallet`) via the
+ * `woo_wallet_reports_page_top` action.
  *
- * Renders the widget's styles, period tabs (Today / 7 Days / This Month),
- * the initial snapshot body (templates/admin/dashboard-widget-body.php),
+ * Previously shown as a wp-admin Dashboard widget (wp-admin/index.php).
+ * Moved here so the financial overview lives where operators already work.
+ *
+ * Renders the period tabs (Today / 7 Days / This Month), the initial
+ * snapshot body (templates/admin/dashboard-widget-body.php),
  * the Growth Insights section, and the Quick Actions row. Clicking a tab
  * re-fetches the snapshot body via AJAX
  * (Woo_Wallet_Dashboard_Widget::ajax_refresh) and swaps it in — no full
- * wp-admin page reload. Growth Insights is NOT part of that swap (it isn't
- * period-scoped — see Woo_Wallet_Dashboard_Widget_Data's Phase 4 section
- * docblock), so it renders once here rather than living in
- * dashboard-widget-body.php.
+ * page reload. Growth Insights renders once here rather than in
+ * dashboard-widget-body.php (it isn't period-scoped).
  *
  * Expects `$data` (a Woo_Wallet_Dashboard_Widget_Data instance), `$snapshot`
  * (from $data->get_snapshot()), and `$growth` (from
@@ -27,10 +30,25 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+if ( ! current_user_can( get_wallet_user_capability() ) ) {
+	return;
+}
+
 $period_labels = $data->period_labels();
 $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION );
 ?>
 <style>
+	/* Overview panel wrapper — sits above the liability tabs on the Reports page */
+	.woo-wallet-overview-panel {
+		background: #fff;
+		border: 1px solid #dcdcde;
+		border-radius: 3px;
+		padding: 16px 20px;
+		margin: 0 0 20px;
+	}
+	.woo-wallet-overview-panel .woo-wallet-dashboard-widget {
+		max-width: 100%;
+	}
 	.woo-wallet-dashboard-widget .twdw-tabs {
 		display: flex;
 		gap: 4px;
@@ -79,7 +97,7 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 	}
 	.woo-wallet-dashboard-widget .twdw-grid {
 		display: grid;
-		grid-template-columns: repeat(2, 1fr);
+		grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 		gap: 10px;
 		margin: 0;
 	}
@@ -155,6 +173,7 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 		white-space: nowrap;
 	}
 </style>
+<div class="woo-wallet-overview-panel">
 <div class="woo-wallet-dashboard-widget">
 	<nav class="twdw-tabs">
 		<?php foreach ( $period_labels as $period => $label ) : ?>
@@ -239,13 +258,13 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 			href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=woo_wallet_dashboard_export_today' ), 'woo-wallet-dashboard-export-today' ) ); ?>"
 		><?php esc_html_e( "Export Today's Statement", 'woo-wallet' ); ?></a>
 	</div>
-</div>
+</div><!-- .woo-wallet-dashboard-widget -->
+</div><!-- .woo-wallet-overview-panel -->
 <script type="text/javascript">
 	jQuery(function ($) {
-		// Scoped to this specific widget box (WordPress renders the widget
-		// id as the postbox id), so multiple wp_add_dashboard_widget() boxes
-		// on the same screen never cross-wire their tab clicks.
-		var $widget = $('#<?php echo esc_js( Woo_Wallet_Dashboard_Widget::WIDGET_ID ); ?> .woo-wallet-dashboard-widget');
+		// Scoped to the overview panel CSS class rather than a postbox ID
+		// (the panel now lives inside the Reports page, not a wp-admin widget).
+		var $widget = $('.woo-wallet-dashboard-widget');
 
 		function refreshPeriod(period) {
 			var $body = $widget.find('.twdw-body');
