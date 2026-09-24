@@ -106,9 +106,6 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 		border-radius: 3px;
 		padding: 8px 10px;
 	}
-	.woo-wallet-dashboard-widget .twdw-stat--wide {
-		grid-column: 1 / -1;
-	}
 	.woo-wallet-dashboard-widget .twdw-stat__label {
 		display: block;
 		font-size: 11px;
@@ -128,11 +125,6 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 	}
 	.woo-wallet-dashboard-widget .twdw-stat__value.is-debit {
 		color: #d63638;
-	}
-	.woo-wallet-dashboard-widget .twdw-footer {
-		margin: 10px 0 0;
-		font-size: 12px;
-		color: #646970;
 	}
 	.woo-wallet-dashboard-widget .twdw-actions {
 		display: flex;

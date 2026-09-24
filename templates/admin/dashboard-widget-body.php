@@ -108,12 +108,15 @@ $period_phrase   = $data->period_phrase( $snapshot['period'] );
 	</div>
 <?php endif; ?>
 
+<?php
+// Deliberately no "Outstanding liability" tile and no "Updated <time>"
+// footer: this panel renders on the Reports page, whose headline card
+// already shows the same liability figure and whose top bar already shows
+// when the page was generated — repeating either here just says the same
+// thing twice on one screen. The selected period is likewise already named
+// by the active tab above, so the labels below don't repeat it.
+?>
 <div class="twdw-grid">
-	<div class="twdw-stat twdw-stat--wide">
-		<span class="twdw-stat__label"><?php esc_html_e( 'Outstanding liability', 'woo-wallet' ); ?></span>
-		<span class="twdw-stat__value"><?php echo esc_html( $data->format_amount( $snapshot['total_liability'] ) ); ?></span>
-	</div>
-	<?php // The selected period is already shown by the active tab above — no need to repeat it in every label. ?>
 	<div class="twdw-stat">
 		<span class="twdw-stat__label"><?php esc_html_e( 'Inflow', 'woo-wallet' ); ?></span>
 		<span class="twdw-stat__value is-credit"><?php echo esc_html( $data->format_amount( $snapshot['inflow'] ) ); ?></span>
@@ -123,13 +126,3 @@ $period_phrase   = $data->period_phrase( $snapshot['period'] );
 		<span class="twdw-stat__value is-debit"><?php echo esc_html( $data->format_amount( $snapshot['outflow'] ) ); ?></span>
 	</div>
 </div>
-
-<p class="twdw-footer">
-	<?php
-	printf(
-		/* translators: %s: last-generated timestamp */
-		esc_html__( 'Updated %s', 'woo-wallet' ),
-		esc_html( $snapshot['generated_at'] )
-	);
-	?>
-</p>

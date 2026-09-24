@@ -120,7 +120,7 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 == Changelog ==
 
 = v1.7.19 =
-* Improved - De-duplicated the dashboard widget: pending withdrawals no longer appear twice (alert + a separate stat tile — the alert, which links to the review screen, stays); the negative net-flow alert now states the outflow-to-inflow ratio instead of repeating the amounts the tiles right below it already show; and the Inflow/Outflow tile labels no longer repeat the period the active tab already names.
+* Improved - De-duplicated the dashboard widget: pending withdrawals no longer appear twice (alert + a separate stat tile — the alert, which links to the review screen, stays); the negative net-flow alert now states the outflow-to-inflow ratio instead of repeating the amounts the tiles right below it already show; the Inflow/Outflow tile labels no longer repeat the period the active tab already names; and now that the panel sits on the Reports page, its own "Outstanding liability" tile and "Updated" timestamp are gone too, since that page's headline card and top bar already show both.
 
 = v1.7.18 =
 * Security - Fixed a CSRF gap in the admin Withdrawals "Export CSV" button: it had a capability check but no nonce, so a logged-in admin's browser could be made to download every requester's bank name, account number, IBAN and phone number just by loading an attacker-controlled page (e.g. an `<img>` tag pointing at the export URL). The filter form now carries a nonce, verified before the export runs.

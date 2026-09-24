@@ -85,7 +85,11 @@ class Dashboard_Widget_Test extends WP_UnitTestCase {
 		$output = ob_get_clean();
 
 		$this->assertStringContainsString( 'woo-wallet-dashboard-widget', $output );
-		$this->assertStringContainsString( 'Outstanding liability', $output );
+		$this->assertStringContainsString( 'Inflow', $output );
+		$this->assertStringContainsString( 'Outflow', $output );
+		// Both already shown elsewhere on the Reports page this panel sits on.
+		$this->assertStringNotContainsString( 'Outstanding liability', $output );
+		$this->assertStringNotContainsString( 'Updated ', $output );
 	}
 
 	/**
