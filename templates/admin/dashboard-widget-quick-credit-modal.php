@@ -95,6 +95,20 @@ if ( ! defined( 'ABSPATH' ) ) {
 		resize: vertical;
 		min-height: 60px;
 	}
+	/* The modal is appended to <body>, outside .woo-wallet-reports, so the
+	   page's --twr-* tokens aren't inherited — accent repeated literally so
+	   the confirm button matches the panel's Quick Credit button. */
+	.woo-wallet-dashboard-quick-credit .button-primary {
+		background: #5b5bd6;
+		border-color: #5b5bd6;
+		border-radius: 10px;
+		font-weight: 600;
+	}
+	.woo-wallet-dashboard-quick-credit .button-primary:hover,
+	.woo-wallet-dashboard-quick-credit .button-primary:focus {
+		background: #4d4dc4;
+		border-color: #4d4dc4;
+	}
 	.woo-wallet-dashboard-quick-credit .woo-wallet-modal-help {
 		margin: 4px 0 0;
 		font-size: 12px;

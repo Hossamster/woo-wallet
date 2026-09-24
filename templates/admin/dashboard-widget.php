@@ -38,147 +38,234 @@ $period_labels = $data->period_labels();
 $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION );
 ?>
 <style>
-	/* Overview panel wrapper — sits above the liability tabs on the Reports page */
+	/*
+	 * Overview panel — styled from the Reports page's own design tokens
+	 * (--twr-*, defined on .woo-wallet-reports, which this panel renders
+	 * inside) so it reads as part of that page rather than a separate
+	 * box: same surface/border/radius cards, same accent, same label and
+	 * figure typography, same button treatment as the top bar.
+	 */
 	.woo-wallet-overview-panel {
-		background: #fff;
-		border: 1px solid #dcdcde;
-		border-radius: 3px;
-		padding: 16px 20px;
-		margin: 0 0 20px;
+		margin: 0 0 28px;
 	}
-	.woo-wallet-overview-panel .woo-wallet-dashboard-widget {
+	.woo-wallet-dashboard-widget {
+		display: flex;
+		flex-direction: column;
+		gap: 18px;
 		max-width: 100%;
 	}
-	.woo-wallet-dashboard-widget .twdw-tabs {
+	.woo-wallet-dashboard-widget .twdw-head {
+		align-items: center;
 		display: flex;
-		gap: 4px;
-		margin: 0 0 10px;
-		border-bottom: 1px solid #dcdcde;
+		flex-wrap: wrap;
+		gap: 12px;
+		justify-content: space-between;
+	}
+	.woo-wallet-dashboard-widget .twdw-title {
+		color: var(--twr-ink, #181b27);
+		font-size: 15px;
+		font-weight: 600;
+		letter-spacing: -.01em;
+		margin: 0;
+		padding: 0;
+	}
+	/* Period switcher: a segmented control, so it reads as a filter for the
+	   figures below rather than a second row of page tabs above "Summary". */
+	.woo-wallet-dashboard-widget .twdw-tabs {
+		background: var(--twr-surface, #fff);
+		border: 1px solid var(--twr-border, #e7e8ec);
+		border-radius: 10px;
+		display: inline-flex;
+		gap: 2px;
+		padding: 3px;
 	}
 	.woo-wallet-dashboard-widget .twdw-tab {
-		background: none;
-		border: none;
+		background: transparent;
+		border: 0;
+		border-radius: 7px;
+		color: var(--twr-muted, #6b7180);
 		cursor: pointer;
-		padding: 6px 10px;
-		margin: 0 0 -1px;
-		font-size: 12px;
-		color: #646970;
-		border-bottom: 2px solid transparent;
+		font: inherit;
+		font-size: 13px;
+		font-weight: 600;
+		line-height: 1;
+		padding: 8px 14px;
+		transition: background .15s, color .15s;
 	}
 	.woo-wallet-dashboard-widget .twdw-tab:hover {
-		color: #1d2327;
+		color: var(--twr-text, #1c1f2a);
 	}
 	.woo-wallet-dashboard-widget .twdw-tab.is-active {
-		color: #1d2327;
-		font-weight: 600;
-		border-bottom-color: #2271b1;
+		background: var(--twr-accent, #5b5bd6);
+		color: #fff;
+	}
+	.woo-wallet-dashboard-widget .twdw-body {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
 	}
 	.woo-wallet-dashboard-widget .twdw-body.is-loading {
 		opacity: .5;
 	}
 	.woo-wallet-dashboard-widget .twdw-alerts {
-		margin: 0 0 12px;
+		margin: 0;
 	}
 	.woo-wallet-dashboard-widget .twdw-alert {
-		display: flex;
 		align-items: flex-start;
-		gap: 8px;
-		padding: 8px 10px;
-		margin: 0 0 8px;
-		border-left: 4px solid #d63638;
-		background: #fcf0f1;
+		background: #fdf3f3;
+		border: 1px solid #f4d4d4;
+		border-radius: 12px;
+		color: var(--twr-text, #1c1f2a);
+		display: flex;
 		font-size: 13px;
+		gap: 10px;
+		line-height: 1.5;
+		margin: 0;
+		padding: 12px 16px;
 	}
 	.woo-wallet-dashboard-widget .twdw-alert .dashicons {
-		color: #d63638;
+		color: var(--twr-red, #cf4040);
+		flex: none;
 	}
 	.woo-wallet-dashboard-widget .twdw-alert a {
+		color: inherit;
 		font-weight: 600;
 	}
 	.woo-wallet-dashboard-widget .twdw-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-		gap: 10px;
+		gap: 18px;
+		grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 		margin: 0;
 	}
+	/* Same card + figure treatment as the Reports page's own stat cards. */
 	.woo-wallet-dashboard-widget .twdw-stat {
-		background: #f6f7f7;
-		border-radius: 3px;
-		padding: 8px 10px;
+		background: var(--twr-surface, #fff);
+		border: 1px solid var(--twr-border, #e7e8ec);
+		border-radius: 16px;
+		padding: 22px 22px 24px;
 	}
 	.woo-wallet-dashboard-widget .twdw-stat__label {
+		color: var(--twr-faint, #9aa0ad);
 		display: block;
 		font-size: 11px;
-		color: #646970;
+		font-weight: 600;
+		letter-spacing: .08em;
 		text-transform: uppercase;
-		letter-spacing: .02em;
-		margin-bottom: 2px;
 	}
 	.woo-wallet-dashboard-widget .twdw-stat__value {
+		color: var(--twr-ink, #181b27);
 		display: block;
-		font-size: 16px;
+		font-family: "Space Grotesk", sans-serif;
+		font-size: 34px;
 		font-weight: 600;
-		color: #1d2327;
+		letter-spacing: -.02em;
+		line-height: 1;
+		margin-top: 16px;
 	}
 	.woo-wallet-dashboard-widget .twdw-stat__value.is-credit {
-		color: #007017;
+		color: var(--twr-green, #15976a);
 	}
 	.woo-wallet-dashboard-widget .twdw-stat__value.is-debit {
-		color: #d63638;
+		color: var(--twr-red, #cf4040);
+	}
+	.woo-wallet-dashboard-widget .twdw-growth {
+		background: var(--twr-surface, #fff);
+		border: 1px solid var(--twr-border, #e7e8ec);
+		border-radius: 18px;
+		padding: 22px 24px 10px;
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__title {
+		color: var(--twr-faint, #9aa0ad);
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: .08em;
+		margin: 0 0 6px;
+		text-transform: uppercase;
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__list li {
+		align-items: center;
+		border-top: 1px solid var(--twr-border, #e7e8ec);
+		display: flex;
+		font-size: 13px;
+		gap: 12px;
+		justify-content: space-between;
+		margin: 0;
+		padding: 13px 0;
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__list li:first-child {
+		border-top: 0;
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__label {
+		color: var(--twr-muted, #6b7180);
+	}
+	.woo-wallet-dashboard-widget .twdw-growth__value {
+		color: var(--twr-ink, #181b27);
+		font-weight: 600;
+		white-space: nowrap;
 	}
 	.woo-wallet-dashboard-widget .twdw-actions {
 		display: flex;
-		gap: 8px;
-		margin: 12px 0 0;
-		padding-top: 10px;
-		border-top: 1px solid #dcdcde;
+		flex-wrap: wrap;
+		gap: 10px;
 	}
-	.woo-wallet-dashboard-widget .twdw-actions .notice {
-		margin: 0 0 8px;
-	}
-	.woo-wallet-dashboard-widget .twdw-growth {
-		margin: 12px 0 0;
-		padding-top: 10px;
-		border-top: 1px solid #dcdcde;
-	}
-	.woo-wallet-dashboard-widget .twdw-growth__title {
-		margin: 0 0 8px;
-		font-size: 11px;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: .02em;
-		color: #646970;
-	}
-	.woo-wallet-dashboard-widget .twdw-growth__list {
-		margin: 0;
+	/* Same button treatment as the Reports top bar (.twr-actions .button). */
+	.woo-wallet-dashboard-widget .twdw-actions .button {
+		align-items: center;
+		background: #fff;
+		border: 1px solid var(--twr-border, #e7e8ec);
+		border-radius: 10px;
+		box-shadow: none;
+		color: var(--twr-accent, #5b5bd6);
+		display: inline-flex;
+		font-family: inherit;
 		font-size: 13px;
-	}
-	.woo-wallet-dashboard-widget .twdw-growth__list li {
-		display: flex;
-		justify-content: space-between;
-		gap: 8px;
-		padding: 4px 0;
-	}
-	.woo-wallet-dashboard-widget .twdw-growth__label {
-		color: #646970;
-	}
-	.woo-wallet-dashboard-widget .twdw-growth__value {
 		font-weight: 600;
-		color: #1d2327;
-		white-space: nowrap;
+		height: auto;
+		line-height: 1;
+		margin: 0;
+		padding: 10px 16px;
+		text-decoration: none;
+	}
+	.woo-wallet-dashboard-widget .twdw-actions .button:hover,
+	.woo-wallet-dashboard-widget .twdw-actions .button:focus {
+		border-color: var(--twr-accent-soft, #8487e0);
+		color: var(--twr-accent, #5b5bd6);
+	}
+	.woo-wallet-dashboard-widget .twdw-actions .twdw-quick-credit {
+		background: var(--twr-accent, #5b5bd6);
+		border-color: var(--twr-accent, #5b5bd6);
+		color: #fff;
+	}
+	.woo-wallet-dashboard-widget .twdw-actions .twdw-quick-credit:hover,
+	.woo-wallet-dashboard-widget .twdw-actions .twdw-quick-credit:focus {
+		background: #4d4dc4;
+		border-color: #4d4dc4;
+		color: #fff;
+	}
+	.woo-wallet-dashboard-widget .notice {
+		border-radius: 10px;
+		margin: 0;
 	}
 </style>
 <div class="woo-wallet-overview-panel">
 <div class="woo-wallet-dashboard-widget">
-	<nav class="twdw-tabs">
-		<?php foreach ( $period_labels as $period => $label ) : ?>
-			<button
-				type="button"
-				class="twdw-tab<?php echo $period === $snapshot['period'] ? ' is-active' : ''; ?>"
-				data-period="<?php echo esc_attr( $period ); ?>"
-			><?php echo esc_html( $label ); ?></button>
-		<?php endforeach; ?>
-	</nav>
+	<div class="twdw-head">
+		<h2 class="twdw-title"><?php esc_html_e( 'Activity', 'woo-wallet' ); ?></h2>
+		<nav class="twdw-tabs">
+			<?php foreach ( $period_labels as $period => $label ) : ?>
+				<button
+					type="button"
+					class="twdw-tab<?php echo $period === $snapshot['period'] ? ' is-active' : ''; ?>"
+					data-period="<?php echo esc_attr( $period ); ?>"
+				><?php echo esc_html( $label ); ?></button>
+			<?php endforeach; ?>
+		</nav>
+	</div>
 
 	<div class="twdw-body" data-security="<?php echo esc_attr( $nonce ); ?>">
 		<?php include WOO_WALLET_ABSPATH . 'templates/admin/dashboard-widget-body.php'; ?>

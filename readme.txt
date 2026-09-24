@@ -120,6 +120,7 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 == Changelog ==
 
 = v1.7.19 =
+* Improved - The overview panel on the Reports page now uses that page's own design (its cards, accent colour, typography and button style, plus a segmented Today / 7 Days / This Month switcher) instead of default WordPress admin styling, so it no longer looks like a separate block sitting above the report.
 * Improved - De-duplicated the dashboard widget: pending withdrawals no longer appear twice (alert + a separate stat tile — the alert, which links to the review screen, stays); the negative net-flow alert now states the outflow-to-inflow ratio instead of repeating the amounts the tiles right below it already show; the Inflow/Outflow tile labels no longer repeat the period the active tab already names; and now that the panel sits on the Reports page, its own "Outstanding liability" tile and "Updated" timestamp are gone too, since that page's headline card and top bar already show both.
 
 = v1.7.18 =
