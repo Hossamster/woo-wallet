@@ -45,9 +45,23 @@ if ( ! class_exists( 'WooWallet_Topup_Service' ) ) {
 			$user_id        = (int) $user_id;
 			$amount         = (float) $amount;
 			$payment_method = sanitize_key( (string) $payment_method );
-			$currency       = is_string( $currency ) ? strtoupper( trim( $currency ) ) : '';
-			if ( '' !== $currency && ! preg_match( '/^[A-Z]{3}$/', $currency ) ) {
-				return self::fail( 'rest_invalid_currency', __( 'Invalid currency code.', 'woo-wallet' ) );
+			if ( '' !== $currency ) {
+				if ( ! preg_match( '/^[A-Z]{3}$/', $currency ) ) {
+					return self::fail( 'rest_invalid_currency', __( 'Invalid currency code format.', 'woo-wallet' ) );
+				}
+				$supported = function_exists( 'get_woocommerce_currencies' ) ? array_keys( get_woocommerce_currencies() ) : array();
+				$supported = apply_filters( 'woo_wallet_supported_topup_currencies', $supported );
+				if ( ! empty( $supported ) && ! in_array( $currency, $supported, true ) ) {
+					return self::fail(
+						'rest_unsupported_currency',
+						sprintf(
+							/* translators: %s: requested currency code */
+							__( 'Currency %s is not supported for wallet top-up.', 'woo-wallet' ),
+							$currency
+						),
+						400
+					);
+				}
 			}
 
 			if ( ! $user_id ) {

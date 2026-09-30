@@ -658,9 +658,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				'currency'         => (string) $data['currency'],
 				'bank_name'        => (string) $data['bank_name'],
 				'beneficiary_name' => (string) $data['beneficiary_name'],
-				'account_number'   => (string) $data['account_number'],
+				'account_number'   => ( apply_filters( 'woo_wallet_encrypt_bank_details', false ) && class_exists( 'Woo_Wallet_Security' ) ) ? Woo_Wallet_Security::encrypt( (string) $data['account_number'] ) : (string) $data['account_number'],
 				'phone'            => isset( $data['phone'] ) ? (string) $data['phone'] : '',
-				'iban'             => (string) $data['iban'],
+				'iban'             => ( ! empty( $data['iban'] ) && apply_filters( 'woo_wallet_encrypt_bank_details', false ) && class_exists( 'Woo_Wallet_Security' ) ) ? Woo_Wallet_Security::encrypt( (string) $data['iban'] ) : (string) $data['iban'],
 				'reference_no'     => isset( $data['reference_no'] ) ? (string) $data['reference_no'] : '',
 				'receipt_id'       => isset( $data['receipt_id'] ) ? (int) $data['receipt_id'] : 0,
 				'status'           => (string) $data['status'],
@@ -688,7 +688,14 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 */
 		public static function get_request( $id ) {
 			global $wpdb;
-			return $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . self::table() . ' WHERE id = %d', absint( $id ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . self::table() . ' WHERE id = %d', absint( $id ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			if ( $row && class_exists( 'Woo_Wallet_Security' ) ) {
+				$row->account_number = Woo_Wallet_Security::decrypt( $row->account_number );
+				if ( ! empty( $row->iban ) ) {
+					$row->iban = Woo_Wallet_Security::decrypt( $row->iban );
+				}
+			}
+			return $row;
 		}
 
 		/**
@@ -849,10 +856,18 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				$params[] = ! empty( $args['offset'] ) ? (int) $args['offset'] : 0;
 			}
 
-			if ( $params ) {
-				return (array) $wpdb->get_results( $wpdb->prepare( $sql, $params ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+			$results = $params ? (array) $wpdb->get_results( $wpdb->prepare( $sql, $params ) ) : (array) $wpdb->get_results( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+			if ( ! empty( $results ) && class_exists( 'Woo_Wallet_Security' ) ) {
+				foreach ( $results as $row ) {
+					if ( is_object( $row ) ) {
+						$row->account_number = Woo_Wallet_Security::decrypt( $row->account_number );
+						if ( ! empty( $row->iban ) ) {
+							$row->iban = Woo_Wallet_Security::decrypt( $row->iban );
+						}
+					}
+				}
 			}
-			return (array) $wpdb->get_results( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared
+			return $results;
 		}
 
 		/**

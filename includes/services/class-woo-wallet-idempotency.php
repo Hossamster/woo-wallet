@@ -80,24 +80,40 @@ if ( ! class_exists( 'WooWallet_Idempotency' ) ) {
 				);
 			}
 
-			// ponytail: check-then-set, not atomic — two *simultaneous* first requests
-			// can both claim. The ledger's per-user GET_LOCK and balance gate still
-			// serialize the actual money move; the window being closed here is the
-			// sequential retry-after-crash. Upgrade path if simultaneity ever matters:
-			// atomic claim via add_option() on the raw `_transient_*` option name.
-			$token = uniqid( '', true );
-			set_transient(
-				$transient,
-				array(
-					'state' => 'in_progress',
-					'at'    => time(),
-					'token' => $token,
-				),
-				// ponytail: a request that truly dies unblocks after IN_FLIGHT_TTL
-				// rather than staying wedged for the full 24h TTL. Past that a retry
-				// re-executes — today's behaviour, minus the guard window.
-				self::IN_FLIGHT_TTL
+			// Atomic database claim via add_option on the raw `_transient_*` option name.
+			// Because option_name has a UNIQUE constraint in wp_options, two simultaneous
+			// requests can never both insert. Exactly one will succeed; the other will receive false.
+			$raw_option_name = '_transient_' . $transient;
+			$token           = uniqid( '', true );
+			$claim_data      = array(
+				'state' => 'in_progress',
+				'at'    => time(),
+				'token' => $token,
 			);
+			$claimed         = add_option( $raw_option_name, $claim_data, '', 'no' );
+
+			if ( ! $claimed ) {
+				// Re-read existing option to see if it completed or is in-progress
+				$current = get_transient( $transient );
+				if ( is_array( $current ) && isset( $current['status'], $current['body'] ) ) {
+					$response = new WP_REST_Response( $current['body'], (int) $current['status'] );
+					$response->header( 'Idempotent-Replay', 'true' );
+					return $response;
+				}
+				// If an existing in-flight request timed out past IN_FLIGHT_TTL, take over the claim
+				if ( is_array( $current ) && isset( $current['at'] ) && ( time() - (int) $current['at'] > self::IN_FLIGHT_TTL ) ) {
+					update_option( $raw_option_name, $claim_data, 'no' );
+				} else {
+					return new WP_Error(
+						'terawallet_rest_idempotency_in_progress',
+						__( 'A request with this Idempotency-Key is already being processed. Its outcome is not yet known — it may well have succeeded. Do not resubmit it as a new request; check the wallet transaction list, or retry this same key shortly.', 'woo-wallet' ),
+						array( 'status' => 409 )
+					);
+				}
+			}
+
+			// Add transient timeout option for WordPress core garbage collection
+			add_option( '_transient_timeout_' . $transient, time() + self::IN_FLIGHT_TTL, '', 'no' );
 
 			$result = $callback();
 

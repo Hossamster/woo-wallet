@@ -39,7 +39,7 @@ class Me_Withdrawal_Rest_Test extends WP_Test_REST_TestCase {
 		return array_key_first( Woo_Wallet_Withdrawal::get_configured_banks() );
 	}
 
-	private function create_request( $overrides = array() ) {
+	private function create_request( $overrides = array(), $idempotency_key = null ) {
 		$request = new WP_REST_Request( 'POST', '/terawallet/v1/me/withdrawals' );
 		$params  = array_merge(
 			array(
@@ -53,6 +53,12 @@ class Me_Withdrawal_Rest_Test extends WP_Test_REST_TestCase {
 		);
 		foreach ( $params as $key => $value ) {
 			$request->set_param( $key, $value );
+		}
+		if ( null === $idempotency_key ) {
+			$idempotency_key = wp_generate_uuid4();
+		}
+		if ( $idempotency_key ) {
+			$request->set_header( 'Idempotency-Key', $idempotency_key );
 		}
 		return $request;
 	}
@@ -224,5 +230,106 @@ class Me_Withdrawal_Rest_Test extends WP_Test_REST_TestCase {
 
 		$this->assertNotSame( $response1->get_data()['id'], $response2->get_data()['id'] );
 		$this->assertSame( 2, Woo_Wallet_Withdrawal::count_requests( array( 'user_id' => $this->user_id ) ) );
+	}
+
+	public function test_create_requires_idempotency_key() {
+		wp_set_current_user( $this->user_id );
+		$request = $this->create_request( array(), false );
+		$response = $this->dispatch( $request );
+		$this->assertErrorResponse( 'terawallet_rest_idempotency_key_required', $response, 400 );
+	}
+
+	public function test_masked_account_details_and_receipt_url_in_response() {
+		wp_set_current_user( $this->user_id );
+		$response = $this->dispatch(
+			$this->create_request(
+				array(
+					'account_number' => '123456789012',
+					'iban'           => 'EG123456789012345678901234567',
+				)
+			)
+		);
+
+		$this->assertSame( 201, $response->get_status() );
+		$data = $response->get_data();
+
+		$this->assertArrayHasKey( 'account_number_masked', $data );
+		$this->assertSame( '••••••••9012', $data['account_number_masked'] );
+
+		$this->assertArrayHasKey( 'iban_masked', $data );
+		$this->assertStringEndsWith( '4567', $data['iban_masked'] );
+		$this->assertStringStartsWith( '••••', $data['iban_masked'] );
+
+		$this->assertNull( $data['receipt_url'] );
+	}
+
+	public function test_receipt_endpoint_requires_auth_and_ownership() {
+		// Create request as owner.
+		wp_set_current_user( $this->user_id );
+		$res = $this->dispatch( $this->create_request() );
+		$id  = $res->get_data()['id'];
+
+		// Anonymous -> 401.
+		wp_set_current_user( 0 );
+		$anon_req = new WP_REST_Request( 'GET', '/terawallet/v1/me/withdrawals/' . $id . '/receipt' );
+		$anon_res = $this->dispatch( $anon_req );
+		$this->assertErrorResponse( 'rest_not_logged_in', $anon_res, 401 );
+
+		// Other user -> 404.
+		wp_set_current_user( $this->other_user_id );
+		$other_req = new WP_REST_Request( 'GET', '/terawallet/v1/me/withdrawals/' . $id . '/receipt' );
+		$other_res = $this->dispatch( $other_req );
+		$this->assertErrorResponse( 'rest_withdrawal_not_found', $other_res, 404 );
+
+		// Owner when no receipt attached -> 404 rest_receipt_not_found.
+		wp_set_current_user( $this->user_id );
+		$owner_req = new WP_REST_Request( 'GET', '/terawallet/v1/me/withdrawals/' . $id . '/receipt' );
+		$owner_res = $this->dispatch( $owner_req );
+		$this->assertErrorResponse( 'rest_receipt_not_found', $owner_res, 404 );
+	}
+
+	public function test_receipt_endpoint_serves_receipt_to_owner() {
+		global $wpdb;
+		wp_set_current_user( $this->user_id );
+		$res = $this->dispatch( $this->create_request() );
+		$id  = $res->get_data()['id'];
+
+		// Create dummy receipt attachment.
+		$upload_dir = wp_upload_dir();
+		$file_path  = $upload_dir['basedir'] . '/test-receipt.pdf';
+		file_put_contents( $file_path, '%PDF-1.4 test receipt file' );
+
+		$attachment_id = wp_insert_attachment(
+			array(
+				'post_mime_type' => 'application/pdf',
+				'post_title'     => 'test-receipt.pdf',
+				'post_status'    => 'inherit',
+			),
+			$file_path
+		);
+
+		$wpdb->update( $wpdb->prefix . 'woo_wallet_withdrawals', array( 'receipt_id' => $attachment_id ), array( 'id' => $id ) );
+
+		add_filter( 'terawallet_rest_receipt_serve_file', '__return_false' );
+
+		try {
+			$req = new WP_REST_Request( 'GET', '/terawallet/v1/me/withdrawals/' . $id . '/receipt' );
+			$res = $this->dispatch( $req );
+
+			$this->assertSame( 200, $res->get_status() );
+			$this->assertSame( 'private, no-store, max-age=0', $res->get_headers()['Cache-Control'] );
+			$this->assertSame( 'application/pdf', $res->get_headers()['Content-Type'] );
+
+			// Also verify that get_item includes receipt_url pointing to the REST route.
+			$item_res  = $this->dispatch( new WP_REST_Request( 'GET', '/terawallet/v1/me/withdrawals/' . $id ) );
+			$item_data = $item_res->get_data();
+			$this->assertStringContainsString( '/terawallet/v1/me/withdrawals/' . $id . '/receipt', $item_data['receipt_url'] );
+		} finally {
+			remove_filter( 'terawallet_rest_receipt_serve_file', '__return_false' );
+			if ( file_exists( $file_path ) ) {
+				unlink( $file_path );
+			}
+			wp_delete_attachment( $attachment_id, true );
+		}
 	}
 }

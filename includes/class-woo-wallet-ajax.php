@@ -275,7 +275,12 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 					WOO_Wallet_Helper::update_order_meta_data( $order, '_partial_payment_refund_id', $transaction_id );
 					do_action( 'woo_wallet_partial_order_refunded', $order_id, $transaction_id );
 				} else {
-					$order->add_order_note( __( 'Wallet partial refund was claimed but the credit failed. Manual review required.', 'woo-wallet' ) );
+					$order->update_meta_data( '_woo_wallet_partial_refunded_total', $already_refunded );
+					if ( 0.0 === (float) $already_refunded ) {
+						$order->delete_meta_data( '_woo_wallet_partial_payment_refunded' );
+						$order->update_meta_data( '_partial_pay_through_wallet_compleate', true );
+					}
+					$order->add_order_note( __( 'Wallet partial refund failed: unable to credit customer wallet. Order metadata was rolled back.', 'woo-wallet' ) );
 					$order->save();
 				}
 			} finally {
@@ -341,6 +346,11 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 				foreach ( $line_item_tax_totals as $item_id => $tax_totals ) {
 					$line_items[ $item_id ]['refund_tax'] = array_filter( array_map( 'wc_format_decimal', $tax_totals ) );
 				}
+				$customer_id = $order->get_customer_id();
+				if ( ! $customer_id || ! get_userdata( $customer_id ) ) {
+					throw new Exception( __( 'Cannot refund to wallet: this order does not belong to a registered customer.', 'woo-wallet' ) );
+				}
+
 				$refund_reason = $refund_reason ? $refund_reason : __( 'Wallet refund #', 'woo-wallet' ) . $order->get_order_number();
 				// Create the refund object.
 				$refund = wc_create_refund(
@@ -354,9 +364,15 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 					)
 				);
 				if ( ! is_wp_error( $refund ) ) {
-					$transaction_id = woo_wallet()->wallet->credit( $order->get_customer_id(), $refund_amount, $refund_reason, array( 'currency' => $order->get_currency( 'edit' ) ) );
+					$transaction_id = woo_wallet()->wallet->credit( $customer_id, $refund_amount, $refund_reason, array( 'currency' => $order->get_currency( 'edit' ) ) );
 					if ( ! $transaction_id ) {
-						throw new Exception( __( 'Refund not credited to customer', 'woo-wallet' ) );
+						// Compensating rollback: delete the refund record to prevent order and wallet ledger divergence.
+						if ( $refund instanceof WC_Order_Refund ) {
+							$refund->delete( true );
+						}
+						/* translators: 1: formatted refund amount, 2: customer ID */
+						$order->add_order_note( sprintf( __( 'Wallet refund failed: unable to credit %1$s to customer #%2$d. The order refund was rolled back.', 'woo-wallet' ), wc_price( $refund_amount, array( 'currency' => $order->get_currency( 'edit' ) ) ), $customer_id ) );
+						throw new Exception( __( 'Could not credit refund to customer wallet. Order refund was rolled back to maintain balance integrity.', 'woo-wallet' ) );
 					} else {
 						do_action( 'woo_wallet_order_refunded', $order, $refund, $transaction_id );
 					}

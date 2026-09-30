@@ -365,6 +365,7 @@ class Admin_Withdrawal_Rest_Test extends WP_Test_REST_TestCase {
 		) as $key => $value ) {
 			$self_request->set_param( $key, $value );
 		}
+		$self_request->set_header( 'Idempotency-Key', wp_generate_uuid4() );
 		$this->dispatch( $self_request );
 
 		wp_set_current_user( $this->admin_id );

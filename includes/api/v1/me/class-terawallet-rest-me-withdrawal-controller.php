@@ -128,6 +128,24 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 					),
 				)
 			);
+
+			register_rest_route(
+				$this->namespace,
+				'/' . $this->rest_base . '/(?P<id>\d+)/receipt',
+				array(
+					'args' => array(
+						'id' => array(
+							'type'        => 'integer',
+							'description' => __( 'Withdrawal request id.', 'woo-wallet' ),
+						),
+					),
+					array(
+						'methods'             => WP_REST_Server::READABLE,
+						'callback'            => array( $this, 'get_receipt' ),
+						'permission_callback' => array( $this, 'check_me_permissions' ),
+					),
+				)
+			);
 		}
 
 		/**
@@ -196,6 +214,61 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 		}
 
 		/**
+		 * Securely download or view the transfer receipt.
+		 *
+		 * Protects customer privacy by ensuring only the withdrawal owner
+		 * (or a store manager) can access the receipt attachment.
+		 *
+		 * @param WP_REST_Request $request Full request.
+		 * @return WP_Error|void
+		 */
+		public function get_receipt( $request ) {
+			$id      = (int) $request['id'];
+			$user_id = $this->current_user_id();
+			$row     = Woo_Wallet_Withdrawal::get_request( $id );
+
+			// Return 404 (not 403) so existence is not leaked to unauthorized callers.
+			if ( ! $row || ( (int) $row->user_id !== $user_id && ! current_user_can( 'manage_woocommerce' ) ) ) {
+				return $this->error( 'rest_withdrawal_not_found', __( 'Withdrawal request not found.', 'woo-wallet' ), 404 );
+			}
+
+			if ( empty( $row->receipt_id ) ) {
+				return $this->error( 'rest_receipt_not_found', __( 'No receipt is attached to this withdrawal request.', 'woo-wallet' ), 404 );
+			}
+
+			$file_path = get_attached_file( $row->receipt_id );
+			if ( ! $file_path || ! file_exists( $file_path ) ) {
+				return $this->error( 'rest_receipt_file_missing', __( 'Receipt file is missing or has expired according to retention policy.', 'woo-wallet' ), 404 );
+			}
+
+			$mime = get_post_mime_type( $row->receipt_id );
+			if ( ! $mime ) {
+				$mime = 'application/octet-stream';
+			}
+
+			$filename = basename( $file_path );
+
+			if ( ! headers_sent() ) {
+				header( 'Content-Type: ' . $mime );
+				header( 'Content-Disposition: inline; filename="' . sanitize_file_name( $filename ) . '"' );
+				header( 'Content-Length: ' . filesize( $file_path ) );
+				header( 'Cache-Control: private, no-store, max-age=0' );
+				header( 'Pragma: no-cache' );
+				header( 'Expires: 0' );
+			}
+
+			if ( ! apply_filters( 'terawallet_rest_receipt_serve_file', true, $file_path, $row ) ) {
+				$response = new WP_REST_Response( array( 'success' => true, 'file' => $file_path, 'mime' => $mime ), 200 );
+				$response->header( 'Cache-Control', 'private, no-store, max-age=0' );
+				$response->header( 'Content-Type', $mime );
+				return $response;
+			}
+
+			readfile( $file_path ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_readfile
+			exit;
+		}
+
+		/**
 		 * Submit a new withdrawal request (idempotent on `Idempotency-Key`).
 		 *
 		 * @param WP_REST_Request $request Request.
@@ -248,11 +321,9 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 				);
 			}
 
-			// Receipts are removed by a retention sweep (default 90 days after
-			// the request date) — `receipt_expires_at` lets a client warn the
-			// customer before the link goes stale, without hardcoding the
-			// retention window (it's admin-configurable).
-			$receipt_url        = $row->receipt_id ? wp_get_attachment_url( $row->receipt_id ) : false;
+			// Receipts are served through an authenticated endpoint rather than direct uploads link.
+			// Receipts are removed by a retention sweep (default 90 days after request date).
+			$receipt_url        = $row->receipt_id ? rest_url( sprintf( '%s/%s/%d/receipt', $this->namespace, $this->rest_base, (int) $row->id ) ) : null;
 			$receipt_expires_at = null;
 			if ( $receipt_url ) {
 				$retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
@@ -261,21 +332,38 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 				}
 			}
 
+			// Decrypt stored fields if encrypted at rest.
+			$account_number = class_exists( 'Woo_Wallet_Security' ) ? Woo_Wallet_Security::decrypt( $row->account_number ) : $row->account_number;
+			$iban           = ( $row->iban && class_exists( 'Woo_Wallet_Security' ) ) ? Woo_Wallet_Security::decrypt( $row->iban ) : $row->iban;
+
+			$mask_string = static function ( $val, $keep = 4 ) {
+				if ( ! is_string( $val ) || '' === $val ) {
+					return null;
+				}
+				$len = strlen( $val );
+				if ( $len <= $keep ) {
+					return $val;
+				}
+				return str_repeat( '•', $len - $keep ) . substr( $val, -$keep );
+			};
+
 			$data = array(
-				'id'                  => (int) $row->id,
-				'amount'              => (float) $row->amount,
-				'charge'              => (float) $row->charge,
-				'currency'            => $currency,
-				'bank_name'           => $row->bank_name,
-				'beneficiary_name'    => $row->beneficiary_name,
-				'account_number'      => $row->account_number,
-				'phone'               => $row->phone,
-				'iban'                => $row->iban ? $row->iban : null,
-				'reference_no'        => $row->reference_no ? $row->reference_no : null,
-				'receipt_url'         => $receipt_url ? $receipt_url : null,
-				'receipt_expires_at'  => $receipt_expires_at,
-				'status'              => 'processing' === $row->status ? 'pending' : $row->status, // internal transient state reads as 'pending' to customers.
-				'notes'               => $notes,
+				'id'                    => (int) $row->id,
+				'amount'                => (float) $row->amount,
+				'charge'                => (float) $row->charge,
+				'currency'              => $currency,
+				'bank_name'             => $row->bank_name,
+				'beneficiary_name'      => $row->beneficiary_name,
+				'account_number'        => $account_number,
+				'account_number_masked' => $mask_string( $account_number, 4 ),
+				'phone'                 => $row->phone,
+				'iban'                  => $iban ? $iban : null,
+				'iban_masked'           => $iban ? $mask_string( $iban, 4 ) : null,
+				'reference_no'          => $row->reference_no ? $row->reference_no : null,
+				'receipt_url'           => $receipt_url,
+				'receipt_expires_at'    => $receipt_expires_at,
+				'status'                => 'processing' === $row->status ? 'pending' : $row->status, // internal transient state reads as 'pending' to customers.
+				'notes'                 => $notes,
 				'date_created'        => mysql_to_rfc3339( $row->date_created ),
 				'date_updated'        => $row->date_updated ? mysql_to_rfc3339( $row->date_updated ) : null,
 				'formatted'           => array(

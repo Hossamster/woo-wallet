@@ -142,18 +142,29 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Controller_Base' ) ) {
 		}
 
 		/**
-		 * Wrap a state-changing handler in idempotency-key replay. The SPA generates
-		 * a UUID per submission and resends it on retries; the second call returns
-		 * the first call's response without re-executing.
+		 * Wrap a state-changing handler in idempotency-key replay. The client supplies
+		 * a unique Idempotency-Key header per submission and resends it on retries;
+		 * the second call returns the first call's response without re-executing.
 		 *
-		 * @param WP_REST_Request $request  Request (read header + user).
-		 * @param callable        $callback Zero-arg handler producing WP_REST_Response|WP_Error.
+		 * Required by default on state-changing financial endpoints (transfer, withdrawal, topup)
+		 * to prevent double-charges and race conditions.
+		 *
+		 * @param WP_REST_Request $request   Request (read header + user).
+		 * @param callable        $callback  Zero-arg handler producing WP_REST_Response|WP_Error.
+		 * @param bool            $required  Whether Idempotency-Key header is strictly required. Default true.
 		 * @return WP_REST_Response|WP_Error
 		 */
-		protected function idempotent( WP_REST_Request $request, callable $callback ) {
-			$key = (string) $request->get_header( 'Idempotency-Key' );
-			if ( '' === $key ) {
-				return $callback();
+		protected function idempotent( WP_REST_Request $request, callable $callback, $required = true ) {
+			if ( $required ) {
+				$key = $this->require_idempotency_key( $request );
+				if ( is_wp_error( $key ) ) {
+					return $key;
+				}
+			} else {
+				$key = (string) $request->get_header( 'Idempotency-Key' );
+				if ( '' === $key ) {
+					return $callback();
+				}
 			}
 			return WooWallet_Idempotency::run( $this->current_user_id(), $key, $callback );
 		}

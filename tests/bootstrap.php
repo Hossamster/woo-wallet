@@ -36,3 +36,8 @@ require $wp_tests_dir . '/includes/bootstrap.php';
  * WooCommerce's post types are registered.
  */
 Woo_Wallet_Install::install();
+
+// Disable core update network checks in admin_init during tests.
+remove_action( 'admin_init', 'wp_update_plugins' );
+remove_action( 'admin_init', 'wp_update_themes' );
+remove_action( 'admin_init', 'wp_version_check' );

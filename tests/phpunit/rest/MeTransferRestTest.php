@@ -47,10 +47,16 @@ class Me_Transfer_Rest_Test extends Transfer_Test_Case {
 		return (float) woo_wallet()->wallet->get_wallet_balance( $user_id, 'edit' );
 	}
 
-	private function transfer_request( array $params ) {
+	private function transfer_request( array $params, $idempotency_key = null ) {
 		$request = new WP_REST_Request( 'POST', '/terawallet/v1/me/transfer' );
 		foreach ( $params as $key => $value ) {
 			$request->set_param( $key, $value );
+		}
+		if ( null === $idempotency_key ) {
+			$idempotency_key = wp_generate_uuid4();
+		}
+		if ( $idempotency_key ) {
+			$request->set_header( 'Idempotency-Key', $idempotency_key );
 		}
 		return $request;
 	}
@@ -139,6 +145,13 @@ class Me_Transfer_Rest_Test extends Transfer_Test_Case {
 		$this->assertSame( $response1->get_data(), $response2->get_data() );
 		$this->assertSame( 900.0, $this->balance( $this->sender_id ), 'A replayed transfer must not move funds a second time.' );
 		$this->assertSame( 100.0, $this->balance( $this->recipient_id ) );
+	}
+
+	public function test_transfer_requires_idempotency_key() {
+		wp_set_current_user( $this->sender_id );
+		$request = $this->transfer_request( array( 'recipient_id' => $this->recipient_id, 'amount' => 50 ), false );
+		$response = $this->dispatch( $request );
+		$this->assertErrorResponse( 'terawallet_rest_idempotency_key_required', $response, 400 );
 	}
 
 	// -- recipient autocomplete -------------------------------------------
