@@ -60,6 +60,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 			add_action( 'admin_enqueue_scripts', array( $this, 'admin_scripts' ), 10 );
 			add_action( 'admin_menu', array( $this, 'admin_menu' ), 50 );
 			add_action( 'admin_post_woo_wallet_export_referrals', array( $this, 'export_referrals_csv' ) );
+			add_action( 'admin_post_woo_wallet_export_transactions', array( $this, 'export_transactions_csv' ) );
 			if ( 'on' === woo_wallet()->settings_api->get_option( 'is_enable_cashback_reward_program', '_wallet_settings_credit', 'off' ) && 'product' === woo_wallet()->settings_api->get_option( 'cashback_rule', '_wallet_settings_credit', 'cart' ) ) {
 				add_filter( 'woocommerce_product_data_tabs', array( $this, 'woocommerce_product_data_tabs' ) );
 				add_action( 'woocommerce_product_data_panels', array( $this, 'woocommerce_product_data_panels' ) );
@@ -248,6 +249,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 				add_filter( 'woocommerce_account_settings', array( $this, 'add_woocommerce_account_endpoint_settings' ) );
 			}
 			$this->download_export_file();
+			$this->maybe_export_transactions_csv();
 		}
 		/**
 		 * Download generated export CSV file.
@@ -513,6 +515,205 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 			fclose( $output ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 			exit;
 		}
+
+		/**
+		 * Maybe export transactions as CSV on admin_init.
+		 */
+		public function maybe_export_transactions_csv() {
+			if ( ! is_admin() || ! isset( $_GET['page'] ) || 'woo-wallet-transactions' !== $_GET['page'] ) {
+				return;
+			}
+			if ( empty( $_GET['export_action'] ) ) {
+				return;
+			}
+			$this->export_transactions_csv();
+		}
+
+		/**
+		 * Stream the wallet transactions as a CSV download.
+		 *
+		 * Handles authorization (capability check and nonce verification),
+		 * sends download headers, and calls generate_transactions_csv() to stream.
+		 *
+		 * @return void
+		 */
+		public function export_transactions_csv() {
+			check_admin_referer( 'woo_wallet_export_transactions' );
+			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+				wp_die( esc_html__( 'You do not have permission to export transactions.', 'woo-wallet' ) );
+			}
+
+			if ( function_exists( 'wc_set_time_limit' ) ) {
+				wc_set_time_limit( 0 );
+			}
+
+			$filename = sprintf( 'wallet-transactions-%s.csv', current_time( 'Y-m-d-His' ) );
+
+			if ( function_exists( 'wc_nocache_headers' ) ) {
+				wc_nocache_headers();
+			} else {
+				nocache_headers();
+			}
+
+			header( 'Content-Type: text/csv; charset=UTF-8' );
+			header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+			header( 'Pragma: no-cache' );
+			header( 'Expires: 0' );
+
+			$output = fopen( 'php://output', 'w' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+			$this->generate_transactions_csv( $output );
+			fclose( $output ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			exit;
+		}
+
+		/**
+		 * Generate transactions CSV content and write to a stream.
+		 *
+		 * @param resource   $output      Output stream resource (e.g. fopen('php://output', 'w') or a memory buffer).
+		 * @param array|null $filter_args Query filter args, or null to auto-resolve from $_GET.
+		 * @return int Total number of exported rows.
+		 */
+		public function generate_transactions_csv( $output, $filter_args = null ) {
+			if ( ! is_resource( $output ) ) {
+				return 0;
+			}
+
+			if ( null === $filter_args ) {
+				if ( ! class_exists( 'Woo_Wallet_Transaction_Details' ) ) {
+					include_once WOO_WALLET_ABSPATH . 'includes/admin/class-woo-wallet-transaction-details.php';
+				}
+				$filter_args = Woo_Wallet_Transaction_Details::get_filter_args();
+			}
+
+			// Output UTF-8 BOM for Microsoft Excel compatibility (Arabic & UTF-8 characters).
+			fputs( $output, "\xEF\xBB\xBF" );
+
+			// CSV Column Headers.
+			$headers = array(
+				__( 'Transaction ID', 'woo-wallet' ),
+				__( 'Date', 'woo-wallet' ),
+				__( 'Customer ID', 'woo-wallet' ),
+				__( 'Customer Name', 'woo-wallet' ),
+				__( 'Customer Email', 'woo-wallet' ),
+				__( 'Type', 'woo-wallet' ),
+				__( 'Category', 'woo-wallet' ),
+				__( 'Amount', 'woo-wallet' ),
+				__( 'Currency', 'woo-wallet' ),
+				__( 'Details', 'woo-wallet' ),
+				__( 'Created By', 'woo-wallet' ),
+			);
+			$headers = apply_filters( 'woo_wallet_export_transactions_headers', $headers );
+			fputcsv( $output, $headers, ',', '"', '\\' );
+
+			if ( false === $filter_args ) {
+				return 0;
+			}
+
+			// Formula escape function against spreadsheet formula injection.
+			$csv_escape = static function ( $value ) {
+				if ( null === $value || '' === $value ) {
+					return '';
+				}
+				$value = (string) $value;
+				if ( in_array( $value[0], array( '=', '+', '-', '@', "\t", "\r" ), true ) ) {
+					return "'" . $value;
+				}
+				return $value;
+			};
+
+			$limit      = 500;
+			$offset     = 0;
+			$total_rows = 0;
+			$user_cache = array();
+
+			while ( true ) {
+				$batch_args   = array_merge(
+					$filter_args,
+					array(
+						'limit'    => $offset . ',' . $limit,
+						'order_by' => 'transaction_id',
+						'order'    => 'DESC',
+						'nocache'  => true,
+					)
+				);
+				$transactions = get_wallet_transactions( $batch_args );
+				if ( empty( $transactions ) || ! is_array( $transactions ) ) {
+					break;
+				}
+
+				// Preload user objects for this chunk to prevent single-user DB calls.
+				$user_ids_to_prime = array();
+				foreach ( $transactions as $t ) {
+					if ( ! empty( $t->user_id ) && ! isset( $user_cache[ $t->user_id ] ) ) {
+						$user_ids_to_prime[] = (int) $t->user_id;
+					}
+					if ( ! empty( $t->created_by ) && ! isset( $user_cache[ $t->created_by ] ) ) {
+						$user_ids_to_prime[] = (int) $t->created_by;
+					}
+				}
+				if ( ! empty( $user_ids_to_prime ) && function_exists( 'cache_users' ) ) {
+					cache_users( array_unique( $user_ids_to_prime ) );
+				}
+
+				foreach ( $transactions as $transaction ) {
+					$user_id = (int) $transaction->user_id;
+					if ( ! isset( $user_cache[ $user_id ] ) ) {
+						$user_cache[ $user_id ] = get_userdata( $user_id );
+					}
+					$user = $user_cache[ $user_id ];
+
+					$created_by_id  = (int) $transaction->created_by;
+					$created_by_str = '';
+					if ( 0 === $created_by_id || $created_by_id === $user_id ) {
+						$created_by_str = __( 'Self-service (Customer)', 'woo-wallet' );
+					} else {
+						if ( ! isset( $user_cache[ $created_by_id ] ) ) {
+							$user_cache[ $created_by_id ] = get_userdata( $created_by_id );
+						}
+						$creator        = $user_cache[ $created_by_id ];
+						$created_by_str = $creator ? $creator->display_name : '#' . $created_by_id;
+					}
+
+					$category_label = function_exists( 'woo_wallet_get_transaction_type_label' )
+						? woo_wallet_get_transaction_type_label( $transaction->category )
+						: $transaction->category;
+
+					$type_label = ( 'credit' === $transaction->type )
+						? __( 'Credit', 'woo-wallet' )
+						: __( 'Debit', 'woo-wallet' );
+
+					$details_clean = wp_strip_all_tags( html_entity_decode( (string) $transaction->details, ENT_QUOTES, 'UTF-8' ) );
+
+					$row = array(
+						(int) $transaction->transaction_id,
+						$transaction->date,
+						$user_id,
+						$user ? $csv_escape( $user->display_name ) : '',
+						$user ? $csv_escape( $user->user_email ) : '',
+						$type_label,
+						$csv_escape( $category_label ),
+						$transaction->amount,
+						$transaction->currency,
+						$csv_escape( $details_clean ),
+						$csv_escape( $created_by_str ),
+					);
+
+					$row = apply_filters( 'woo_wallet_export_transactions_row', $row, $transaction );
+					fputcsv( $output, $row, ',', '"', '\\' );
+					$total_rows++;
+				}
+
+				$offset += count( $transactions );
+				if ( count( $transactions ) < $limit ) {
+					break;
+				}
+				if ( function_exists( 'wc_set_time_limit' ) ) {
+					wc_set_time_limit( 30 );
+				}
+			}
+
+			return $total_rows;
+		}
 		/**
 		 * Register and enqueue admin styles and scripts
 		 *
@@ -775,9 +976,29 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 			$base_currency = class_exists( 'Woo_Wallet_Currency_Manager' )
 				? Woo_Wallet_Currency_Manager::instance()->get_base_currency()
 				: strtoupper( (string) get_option( 'woocommerce_currency', 'USD' ) );
+
+			// Carry the active filters onto the CSV export link.
+			$export_args = array(
+				'page'          => 'woo-wallet-transactions',
+				'export_action' => 'transactions_csv',
+			);
+			if ( null !== $user_id && '' !== $user_id ) {
+				$export_args['user_id'] = absint( $user_id );
+			}
+			foreach ( array( 'transaction_user', 'transaction_category', 'transaction_after', 'transaction_before' ) as $filter_key ) {
+				if ( ! empty( $_GET[ $filter_key ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+					$export_args[ $filter_key ] = sanitize_text_field( wp_unslash( $_GET[ $filter_key ] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				}
+			}
+			$export_url = wp_nonce_url( add_query_arg( $export_args, admin_url( 'admin.php' ) ), 'woo_wallet_export_transactions' );
 			?>
 			<div class="wrap">
-				<h2><?php esc_html_e( 'Transactions', 'woo-wallet' ); ?> <a style="text-decoration: none;" href="<?php echo esc_url( add_query_arg( array( 'page' => 'woo-wallet-users' ), admin_url( 'admin.php' ) ) ); ?>"><span class="dashicons dashicons-editor-break" style="vertical-align: middle;"></span></a></h2>
+				<h1 class="wp-heading-inline">
+					<?php esc_html_e( 'Transactions', 'woo-wallet' ); ?>
+					<a style="text-decoration: none;" href="<?php echo esc_url( add_query_arg( array( 'page' => 'woo-wallet-users' ), admin_url( 'admin.php' ) ) ); ?>"><span class="dashicons dashicons-editor-break" style="vertical-align: middle;"></span></a>
+				</h1>
+				<a href="<?php echo esc_url( $export_url ); ?>" class="page-title-action"><?php esc_html_e( 'Export CSV', 'woo-wallet' ); ?></a>
+				<hr class="wp-header-end" />
 				<?php do_action( 'woo_wallet_admin_page_header' ); ?>
 				<?php if ( null !== $user_id && '' !== $user_id ) : ?>
 					<p>
@@ -792,6 +1013,9 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 				<?php do_action( 'before_woo_wallet_transaction_details_page', $user_id ); ?>
 				<form id="posts-filter" method="get">
 					<input type="hidden" name="page" value="woo-wallet-transactions" />
+					<?php if ( null !== $user_id && '' !== $user_id ) : ?>
+						<input type="hidden" name="user_id" value="<?php echo esc_attr( absint( $user_id ) ); ?>" />
+					<?php endif; ?>
 					<?php $this->transaction_details_table->display(); ?>
 				</form>
 				<div id="ajax-response"></div>
@@ -912,6 +1136,9 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 		 * Transaction details page initialization
 		 */
 		public function add_woo_wallet_transaction_details_option() {
+			if ( ! empty( $_GET['export_action'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				$this->export_transactions_csv();
+			}
 			$option = 'per_page';
 			$args   = array(
 				'label'   => 'Number of items per page:',
