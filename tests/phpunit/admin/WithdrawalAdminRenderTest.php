@@ -126,7 +126,11 @@ class Withdrawal_Admin_Render_Test extends WP_UnitTestCase {
 	}
 
 	public function test_detail_screen_shows_receipt_retention_note_when_receipt_present() {
-		$attachment_id = self::factory()->attachment->create_object( array( 'post_mime_type' => 'application/pdf' ) );
+		// A real uploaded file, not create_object()'s bare post-only fixture:
+		// the "View receipt" link now depends on get_attached_file() actually
+		// resolving to a real file (see Woo_Wallet_Withdrawal::receipt_view_url()),
+		// which a fixture with no underlying file never satisfies.
+		$attachment_id = self::factory()->attachment->create_upload_object( DIR_TESTDATA . '/images/one-blue-pixel-100x100.png' );
 		$row           = $this->seed_request( array( 'receipt_id' => $attachment_id ) );
 		$html          = $this->render_detail( $row->id );
 

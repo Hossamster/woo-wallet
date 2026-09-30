@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.8.0
+Stable tag: 1.8.1
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,12 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.8.1 =
+* Security - Withdrawal receipts (bank statements/proof-of-payment, often containing account numbers and IBANs) are now relocated to a `.htaccess`-denied storage directory the moment they're attached to a withdrawal, instead of staying in the public Media Library uploads path indefinitely. Every place that used to link the raw attachment URL (the admin request-detail screen, the admin REST API's `receipt_url` field) now points at the existing capability/ownership-checked `terawallet/v1/me/withdrawals/{id}/receipt` endpoint instead. Note: the `.htaccess` deny is only effective on Apache — on other web servers, the receipt is still no longer reachable at its original URL (the file itself is relocated), but the new storage directory relies on server-level configuration for its own protection, same as this plugin's existing CSV-export directory.
+* Security - An admin-initiated wallet refund that also moves money through a payment gateway (`api_refund`) no longer deletes the created refund record if crediting the wallet afterward fails. By that point the gateway has already refunded the customer for real; deleting the record didn't undo that, it just erased the only trace of it. The order is now flagged for manual reconciliation instead, with an explicit "do not retry" note — retrying would refund the gateway a second time. A wallet-ledger-only refund (no gateway money movement) still gets the original, genuine rollback.
+* Fix - The automatic partial-payment refund (fired whenever any refund is created on an order with a completed wallet partial payment) used to record its credit as done before actually crediting it; if the credit then failed, that bookkeeping stayed wrong permanently, silently short-changing whatever refund came next on the same order. It now rolls back on a failed credit, matching the existing manual "Refund to wallet" action.
+* Fix - `WooWallet_Idempotency`'s atomic claim was read back through `get_transient()`, a different store than the raw `wp_options` row the claim itself is written to once a persistent object cache (Redis/Memcached) is active — a cache flush or restart could wipe a completed result while the claim survived, permanently wedging that Idempotency-Key at a 409. Every read and write now goes through the same raw option. Also fixes a related bug this surfaced: an abandoned in-progress claim from a crashed request could never actually be taken over by a retry, regardless of how long it had been sitting there.
 
 = v1.8.0 =
 * Improved - The overview panel on the Reports page now uses that page's own design (its cards, accent colour, typography and button style, plus a segmented Today / 7 Days / This Month switcher) instead of default WordPress admin styling, so it no longer looks like a separate block sitting above the report.

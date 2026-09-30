@@ -505,7 +505,15 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 				'iban'                  => $row->iban ? $row->iban : null,
 				'reference_no'          => $row->reference_no ? $row->reference_no : null,
 				'receipt_id'            => $row->receipt_id ? (int) $row->receipt_id : null,
-				'receipt_url'           => $row->receipt_id ? wp_get_attachment_url( $row->receipt_id ) : null,
+				// Never wp_get_attachment_url(): once attached to a withdrawal,
+				// a receipt is relocated out of the public uploads tree (see
+				// Woo_Wallet_Withdrawal::protect_receipt_file()) specifically so
+				// that URL stops resolving — this must always be the protected
+				// endpoint instead. No nonce appended here (unlike
+				// Woo_Wallet_Withdrawal::receipt_view_url()'s admin-screen
+				// callers): whatever consumes this REST response fetches it with
+				// its own authenticated request headers.
+				'receipt_url'           => $row->receipt_id ? Woo_Wallet_Withdrawal::receipt_view_url( $row->id, false ) : null,
 				'receipt_expires_at'    => ( $row->receipt_id && Woo_Wallet_Withdrawal::receipt_retention_days() > 0 )
 					? mysql_to_rfc3339( gmdate( 'Y-m-d H:i:s', strtotime( $row->date_created ) + ( Woo_Wallet_Withdrawal::receipt_retention_days() * DAY_IN_SECONDS ) ) )
 					: null,

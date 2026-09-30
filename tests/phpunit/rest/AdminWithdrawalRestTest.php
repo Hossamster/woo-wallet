@@ -398,4 +398,42 @@ class Admin_Withdrawal_Rest_Test extends WP_Test_REST_TestCase {
 		$response = $this->dispatch( $request );
 		$this->assertErrorResponse( 'terawallet_rest_invalid_receipt', $response, 400 );
 	}
+
+	/**
+	 * receipt_url must never be wp_get_attachment_url() — once attached to
+	 * a withdrawal, the file is relocated out of the public uploads tree
+	 * (Woo_Wallet_Withdrawal::protect_receipt_file()) specifically so that
+	 * URL stops resolving. Confirms the field points at the protected
+	 * terawallet/v1/me/withdrawals/{id}/receipt endpoint instead.
+	 */
+	public function test_receipt_url_points_to_the_protected_endpoint_not_the_raw_attachment_url() {
+		$attachment_id = self::factory()->attachment->create_upload_object( DIR_TESTDATA . '/images/one-blue-pixel-100x100.png' );
+		$raw_url       = wp_get_attachment_url( $attachment_id );
+
+		wp_set_current_user( $this->admin_id );
+		$request = new WP_REST_Request( 'POST', '/terawallet/v1/admin/withdrawals' );
+		$request->set_header( 'Idempotency-Key', wp_generate_password( 12, false ) );
+		foreach ( array(
+			'user_id'          => $this->customer_id,
+			'amount'           => 50,
+			'bank_name'        => $this->valid_bank(),
+			'beneficiary_name' => 'Mohamed Ali',
+			'account_number'   => '1234567890',
+			'phone'            => '01012345678',
+			'receipt_id'       => $attachment_id,
+		) as $key => $value ) {
+			$request->set_param( $key, $value );
+		}
+		$response = $this->dispatch( $request );
+		$data     = $response->get_data();
+
+		$this->assertNotEmpty( $data['receipt_url'] );
+		$this->assertStringContainsString( '/terawallet/v1/me/withdrawals/' . $data['id'] . '/receipt', $data['receipt_url'] );
+		$this->assertNotSame( $raw_url, $data['receipt_url'] );
+
+		// The response field is fetched with the SPA's own auth headers, so
+		// (unlike the admin detail screen's plain <a href> link) it must not
+		// carry an embeddable nonce that would go stale on its own.
+		$this->assertStringNotContainsString( '_wpnonce', $data['receipt_url'] );
+	}
 }

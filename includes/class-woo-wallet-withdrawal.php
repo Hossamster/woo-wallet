@@ -1277,6 +1277,134 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
+		 * The URL to view/download a withdrawal's receipt — always the
+		 * protected TeraWallet_REST_Me_Withdrawal_Controller::get_receipt()
+		 * endpoint (checks ownership or manage_woocommerce, streams the file
+		 * from its real disk path), never wp_get_attachment_url() — see
+		 * protect_receipt_file()'s docblock for why that URL must not be
+		 * exposed anywhere once a receipt is attached to a withdrawal.
+		 *
+		 * @param int  $request_id    Withdrawal request id.
+		 * @param bool $include_nonce Append a `_wpnonce` query arg, for a
+		 *                            plain server-rendered `<a href>` link
+		 *                            that can't attach a custom X-WP-Nonce
+		 *                            header. Omit it when the caller will
+		 *                            fetch the URL with its own
+		 *                            authenticated request headers (e.g. a
+		 *                            REST API JSON field an SPA fetches) —
+		 *                            an embedded nonce goes stale and starts
+		 *                            failing on its own, and WordPress's
+		 *                            cookie-auth check prefers a `_wpnonce`
+		 *                            query arg over a fresh X-WP-Nonce header
+		 *                            sent alongside it.
+		 * @return string
+		 */
+		public static function receipt_view_url( $request_id, $include_nonce = true ) {
+			$url = rest_url( sprintf( 'terawallet/v1/me/withdrawals/%d/receipt', (int) $request_id ) );
+			if ( $include_nonce ) {
+				$url = add_query_arg( '_wpnonce', wp_create_nonce( 'wp_rest' ), $url );
+			}
+			return $url;
+		}
+
+		/**
+		 * Directory receipts are relocated into once attached to a
+		 * withdrawal — `.htaccess`-denied, same pattern as
+		 * TeraWallet_CSV_Exporter::get_export_dir(). Receipts contain bank
+		 * account numbers, IBANs and proof-of-payment documents, so — unlike
+		 * an ordinary Media Library upload — they must never be reachable at
+		 * a guessable public URL, only through
+		 * TeraWallet_REST_Me_Withdrawal_Controller::get_receipt() (which
+		 * checks ownership/capability and reads the file by its real disk
+		 * path, so it keeps working regardless of which directory the file
+		 * actually lives in).
+		 *
+		 * @return string Absolute path, no trailing slash.
+		 */
+		public static function receipt_storage_dir() {
+			$upload_dir = wp_upload_dir();
+			$dir        = trailingslashit( $upload_dir['basedir'] ) . 'woo-wallet-receipts';
+
+			if ( ! file_exists( $dir ) ) {
+				wp_mkdir_p( $dir );
+			}
+			$htaccess = trailingslashit( $dir ) . '.htaccess';
+			if ( ! file_exists( $htaccess ) ) {
+				@file_put_contents( $htaccess, "deny from all\n" ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents, Generic.PHP.NoSilencedErrors.Discouraged
+			}
+			$index = trailingslashit( $dir ) . 'index.html';
+			if ( ! file_exists( $index ) ) {
+				@file_put_contents( $index, '' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents, Generic.PHP.NoSilencedErrors.Discouraged
+			}
+			return $dir;
+		}
+
+		/**
+		 * Physically relocate a receipt attachment out of the public
+		 * uploads tree into receipt_storage_dir(), so its original,
+		 * guessable public Media Library URL stops resolving. Called once,
+		 * the moment a receipt_id is actually attached to a withdrawal row
+		 * (admin_create()/admin_process()) — not at upload time, since an
+		 * attachment a caller merely uploaded but never successfully
+		 * attached to anything shouldn't be moved out from under them.
+		 *
+		 * Idempotent: a no-op if the file already lives in the protected
+		 * directory. Fails soft (leaves the file exactly where it was) on
+		 * any filesystem error, rather than risk a half-moved attachment
+		 * whose meta and physical location disagree.
+		 *
+		 * Also strips any generated intermediate image sizes (thumbnails)
+		 * rather than relocating them too: nothing in this plugin ever
+		 * requests a receipt at any size but the original, so a thumbnail
+		 * left behind in the old public location, at a wholly predictable
+		 * filename, would otherwise go on leaking the image content even
+		 * after the original file is protected.
+		 *
+		 * @param int $attachment_id Media Library attachment id.
+		 * @return void
+		 */
+		public static function protect_receipt_file( $attachment_id ) {
+			$attachment_id = (int) $attachment_id;
+			if ( ! $attachment_id || 'attachment' !== get_post_type( $attachment_id ) ) {
+				return;
+			}
+
+			$current_path = get_attached_file( $attachment_id );
+			if ( ! $current_path || ! file_exists( $current_path ) ) {
+				return;
+			}
+
+			$protected_dir = self::receipt_storage_dir();
+			if ( 0 === strpos( wp_normalize_path( $current_path ), trailingslashit( wp_normalize_path( $protected_dir ) ) ) ) {
+				return; // Already protected.
+			}
+
+			$new_path = trailingslashit( $protected_dir ) . wp_unique_filename( $protected_dir, wp_basename( $current_path ) );
+
+			if ( ! @rename( $current_path, $new_path ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.rename_rename
+				return;
+			}
+
+			update_attached_file( $attachment_id, $new_path );
+
+			$metadata = wp_get_attachment_metadata( $attachment_id );
+			if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
+				$old_dir = trailingslashit( dirname( $current_path ) );
+				foreach ( $metadata['sizes'] as $size ) {
+					if ( empty( $size['file'] ) ) {
+						continue;
+					}
+					$size_path = $old_dir . $size['file'];
+					if ( file_exists( $size_path ) ) {
+						@unlink( $size_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.unlink_unlink
+					}
+				}
+				unset( $metadata['sizes'] );
+				wp_update_attachment_metadata( $attachment_id, $metadata );
+			}
+		}
+
+		/**
 		 * Schedule the daily receipt-retention sweep if it isn't already
 		 * scheduled. Runs on `init` rather than only on plugin activation, so
 		 * an in-place code update (no re-activation) still gets it scheduled.
@@ -1563,8 +1691,8 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					<tr>
 						<th><?php esc_html_e( 'Receipt', 'woo-wallet' ); ?></th>
 						<td>
-							<?php if ( $request->receipt_id && wp_get_attachment_url( $request->receipt_id ) ) : ?>
-								<a href="<?php echo esc_url( wp_get_attachment_url( $request->receipt_id ) ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'View receipt', 'woo-wallet' ); ?></a>
+							<?php if ( $request->receipt_id && get_attached_file( $request->receipt_id ) ) : ?>
+								<a href="<?php echo esc_url( self::receipt_view_url( $request->id ) ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'View receipt', 'woo-wallet' ); ?></a>
 								<?php $ww_retention_days = self::receipt_retention_days(); ?>
 								<?php if ( $ww_retention_days > 0 ) : ?>
 									<p class="description">
@@ -1876,6 +2004,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			if ( $receipt_id ) {
 				global $wpdb;
 				$wpdb->update( self::table(), array( 'receipt_id' => (int) $receipt_id ), array( 'id' => $result['id'] ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+				self::protect_receipt_file( $receipt_id );
 			}
 			if ( $note ) {
 				self::add_note( $result['id'], $note, $note_visibility, $admin_id );
@@ -2063,6 +2192,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 						'receipt_orphaned' => (bool) $receipt_id,
 					);
 				}
+				if ( $receipt_id ) {
+					self::protect_receipt_file( $receipt_id );
+				}
 				if ( $note ) {
 					self::add_note( $request->id, $note, $note_visibility, $admin_id );
 				}
@@ -2113,6 +2245,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					'message'          => __( 'This request was just processed by someone else — no changes were made.', 'woo-wallet' ),
 					'receipt_orphaned' => (bool) $receipt_id,
 				);
+			}
+			if ( $receipt_id ) {
+				self::protect_receipt_file( $receipt_id );
 			}
 
 			// idempotent_refund() checks the wallet ledger itself before
