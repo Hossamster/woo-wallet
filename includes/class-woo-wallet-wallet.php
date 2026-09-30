@@ -864,11 +864,12 @@ if ( ! class_exists( 'Woo_Wallet_Wallet' ) ) {
 				}
 
 				// Claim before credit so a concurrent cancel/refund cannot double-pay.
-				$processed[] = (string) $refund_id;
-				$new_total   = $already + $refund_now;
+				$processed[]        = (string) $refund_id;
+				$new_total          = $already + $refund_now;
+				$fully_refunded_now = $new_total + 0.001 >= $via_wallet;
 				$locked_order->update_meta_data( '_woo_wallet_partial_refunded_total', $new_total );
 				$locked_order->update_meta_data( '_woo_wallet_partial_refund_ids', $processed );
-				if ( $new_total + 0.001 >= $via_wallet ) {
+				if ( $fully_refunded_now ) {
 					$locked_order->update_meta_data( '_woo_wallet_partial_payment_refunded', true );
 				}
 				$locked_order->save();
@@ -891,7 +892,22 @@ if ( ! class_exists( 'Woo_Wallet_Wallet' ) ) {
 					$locked_order->save();
 					do_action( 'woo_wallet_partial_payment_refunded', $order_id, $transaction_id, $refund_now );
 				} else {
-					$locked_order->add_order_note( __( 'Wallet partial refund was claimed but the credit failed. Manual review required.', 'woo-wallet' ) );
+					// Roll back the claim above — without this, a failed credit still
+					// gets recorded as done: _woo_wallet_partial_refunded_total stays
+					// inflated by an amount the customer was never actually credited,
+					// this $refund_id is permanently marked processed (the idempotency
+					// check earlier in this method would skip it forever, on every
+					// future refund event on this order), and — if this refund alone
+					// would have completed the payout — _woo_wallet_partial_payment_refunded
+					// gets set even though nothing was paid. Same rollback shape as
+					// the sibling manual-trigger path in
+					// Woo_Wallet_Ajax::woo_wallet_refund_partial_payment().
+					$locked_order->update_meta_data( '_woo_wallet_partial_refunded_total', $already );
+					$locked_order->update_meta_data( '_woo_wallet_partial_refund_ids', array_values( array_diff( $processed, array( (string) $refund_id ) ) ) );
+					if ( $fully_refunded_now ) {
+						$locked_order->delete_meta_data( '_woo_wallet_partial_payment_refunded' );
+					}
+					$locked_order->add_order_note( __( 'Wallet partial refund failed: unable to credit customer wallet. Order metadata was rolled back — a later refund on this order will not be short-changed by an amount that was never actually credited. This specific refund needs manual review; it will not be retried automatically.', 'woo-wallet' ) );
 					$locked_order->save();
 				}
 			} finally {

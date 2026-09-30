@@ -366,7 +366,39 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 				if ( ! is_wp_error( $refund ) ) {
 					$transaction_id = woo_wallet()->wallet->credit( $customer_id, $refund_amount, $refund_reason, array( 'currency' => $order->get_currency( 'edit' ) ) );
 					if ( ! $transaction_id ) {
-						// Compensating rollback: delete the refund record to prevent order and wallet ledger divergence.
+						if ( $api_refund ) {
+							// wc_create_refund() only ever returns a real WC_Order_Refund
+							// here when $refund_payment (our $api_refund) was true AND the
+							// payment gateway's own process_refund() already succeeded —
+							// if the gateway call had failed, WooCommerce core deletes the
+							// refund object itself and returns a WP_Error before this line
+							// is ever reached (see the is_wp_error() branch below). So by
+							// the time we're here, real money has already been sent back to
+							// the customer through their original payment method. Deleting
+							// $refund now would not undo that — there is no "undo" for a
+							// gateway refund — it would only erase the one database record
+							// of a real financial event, leaving the store's own order
+							// records claiming a refund that provably happened never did.
+							// Keep the refund, flag the order for manual reconciliation, and
+							// tell the admin plainly not to retry.
+							$reconciliation_data = array(
+								'refund_id'   => $refund instanceof WC_Order_Refund ? $refund->get_id() : 0,
+								'amount'      => $refund_amount,
+								'currency'    => $order->get_currency( 'edit' ),
+								'customer_id' => $customer_id,
+								'at'          => current_time( 'mysql' ),
+							);
+							$order->update_meta_data( '_woo_wallet_refund_reconciliation_needed', wp_json_encode( $reconciliation_data ) );
+							/* translators: 1: formatted refund amount, 2: customer ID */
+							$order->add_order_note( sprintf( __( 'Wallet refund: the payment gateway refunded %1$s to customer #%2$d, but crediting their wallet failed. This needs manual reconciliation — do NOT retry the refund, it would refund the gateway a second time. Credit the customer\'s wallet manually instead.', 'woo-wallet' ), wc_price( $refund_amount, array( 'currency' => $order->get_currency( 'edit' ) ) ), $customer_id ) );
+							$order->save();
+							do_action( 'woo_wallet_order_refund_needs_reconciliation', $order, $refund, $customer_id, $refund_amount );
+							throw new Exception( __( 'The payment gateway already refunded the customer, but crediting their wallet failed. This order has been flagged for manual reconciliation — do not retry this refund.', 'woo-wallet' ) );
+						}
+
+						// No gateway-side money movement happened — $refund only
+						// exists in our own order records, so deleting it is a
+						// genuine, complete rollback, not merely a local one.
 						if ( $refund instanceof WC_Order_Refund ) {
 							$refund->delete( true );
 						}
