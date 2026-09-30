@@ -64,7 +64,7 @@ class Woo_Wallet_Transaction_Details extends WP_List_Table {
 	 *
 	 * @return array|false
 	 */
-	public function get_filter_args() {
+	public static function get_filter_args() {
 		// The single-customer deep link (from "View all transactions" elsewhere
 		// in the admin) always wins over the browse-all filter row.
 		$linked_user_id = filter_input( INPUT_GET, 'user_id' );
@@ -300,6 +300,8 @@ class Woo_Wallet_Transaction_Details extends WP_List_Table {
 			<input type="date" name="transaction_after" value="<?php echo esc_attr( $after ); ?>" title="<?php esc_attr_e( 'From date', 'woo-wallet' ); ?>" />
 			<input type="date" name="transaction_before" value="<?php echo esc_attr( $before ); ?>" title="<?php esc_attr_e( 'To date', 'woo-wallet' ); ?>" />
 			<?php submit_button( __( 'Filter', 'woo-wallet' ), '', 'filter_action', false ); ?>
+			<?php submit_button( __( 'Export CSV', 'woo-wallet' ), 'secondary', 'export_action', false ); ?>
+			<?php wp_nonce_field( 'woo_wallet_export_transactions', '_wpnonce', false ); ?>
 		</div>
 		<?php
 	}
