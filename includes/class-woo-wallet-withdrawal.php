@@ -1024,7 +1024,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				return;
 			}
 			check_admin_referer( self::EXPORT_NONCE_ACTION );
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_EXPORT ) ) {
 				wp_die( esc_html__( 'You do not have permission to export this data.', 'woo-wallet' ) );
 			}
 			self::export_csv();
@@ -2004,7 +2004,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * Add the "Withdrawals" submenu under the Axfit Wallet admin menu.
 		 */
 		public function admin_menu() {
-			add_submenu_page( 'woo-wallet', __( 'Withdrawals', 'woo-wallet' ), __( 'Withdrawals', 'woo-wallet' ), get_wallet_user_capability(), 'woo-wallet-withdrawals', array( $this, 'render_admin_page' ) );
+			add_submenu_page( 'woo-wallet', __( 'Withdrawals', 'woo-wallet' ), __( 'Withdrawals', 'woo-wallet' ), Woo_Wallet_Staff::CAP_VIEW, 'woo-wallet-withdrawals', array( $this, 'render_admin_page' ) );
 		}
 
 		/**
@@ -2012,7 +2012,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * form (`&action=new`), or a single request's detail view (`&action=view&id=`).
 		 */
 		public function render_admin_page() {
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_VIEW ) ) {
 				wp_die( esc_html__( 'You do not have permission to access this page.', 'woo-wallet' ) );
 			}
 			$action = isset( $_GET['action'] ) ? sanitize_key( wp_unslash( $_GET['action'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
@@ -2044,7 +2044,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			?>
 			<div class="wrap">
 				<h1 class="wp-heading-inline"><?php esc_html_e( 'Wallet Withdrawals', 'woo-wallet' ); ?></h1>
-				<a href="<?php echo esc_url( $new_url ); ?>" class="page-title-action"><?php esc_html_e( 'Create Withdrawal', 'woo-wallet' ); ?></a>
+				<?php if ( current_user_can( Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS ) ) : ?>
+					<a href="<?php echo esc_url( $new_url ); ?>" class="page-title-action"><?php esc_html_e( 'Create Withdrawal', 'woo-wallet' ); ?></a>
+				<?php endif; ?>
 				<hr class="wp-header-end" />
 				<?php
 				/**
@@ -2117,6 +2119,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 							<th><label for="ww-reference"><?php esc_html_e( 'Reference No. (optional)', 'woo-wallet' ); ?></label></th>
 							<td><input type="text" id="ww-reference" name="reference_no" class="regular-text" /></td>
 						</tr>
+						<?php if ( current_user_can( Woo_Wallet_Staff::CAP_PROCESS_WITHDRAWALS ) ) : ?>
 						<tr>
 							<th><label for="ww-receipt"><?php esc_html_e( 'Receipt (optional)', 'woo-wallet' ); ?></label></th>
 							<td>
@@ -2133,6 +2136,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 								</select>
 							</td>
 						</tr>
+						<?php endif; ?>
 						<tr>
 							<th><label for="ww-note"><?php esc_html_e( 'Note (optional)', 'woo-wallet' ); ?></label></th>
 							<td>
@@ -2198,9 +2202,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 						<td>
 							<?php echo esc_html( $request->bank_name ); ?><br />
 							<?php echo esc_html( $request->beneficiary_name ); ?><br />
-							<?php echo esc_html( $request->account_number ); ?>
+							<?php echo esc_html( Woo_Wallet_Staff::bank_detail( $request->account_number ) ); ?>
 							<?php if ( ! empty( $request->iban ) ) : ?>
-								<br />IBAN: <?php echo esc_html( $request->iban ); ?>
+								<br />IBAN: <?php echo esc_html( Woo_Wallet_Staff::bank_detail( $request->iban ) ); ?>
 							<?php endif; ?>
 						</td>
 					</tr>
@@ -2215,7 +2219,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					<tr>
 						<th><?php esc_html_e( 'Receipt', 'woo-wallet' ); ?></th>
 						<td>
-							<?php if ( self::resolve_receipt_file( $request ) ) : ?>
+							<?php if ( current_user_can( Woo_Wallet_Staff::CAP_VIEW_RECEIPTS ) && self::resolve_receipt_file( $request ) ) : ?>
 								<a href="<?php echo esc_url( self::receipt_view_url( $request->id ) ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'View receipt', 'woo-wallet' ); ?></a>
 								<?php $ww_retention_days = self::receipt_retention_days(); ?>
 								<?php if ( $ww_retention_days > 0 ) : ?>
@@ -2272,7 +2276,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					</tr>
 				</table>
 
-				<?php if ( 'pending' === $request->status ) : ?>
+				<?php if ( ! current_user_can( Woo_Wallet_Staff::CAP_PROCESS_WITHDRAWALS ) ) : ?>
+					<?php // Read-only for support agents: no mark-paid, reject or recover. ?>
+				<?php elseif ( 'pending' === $request->status ) : ?>
 					<h2><?php esc_html_e( 'Process this request', 'woo-wallet' ); ?></h2>
 					<form method="post" action="<?php echo esc_url( $post_url ); ?>" enctype="multipart/form-data">
 						<input type="hidden" name="action" value="woo_wallet_withdrawal_process" />
@@ -2365,7 +2371,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * Handle the manual "Create Withdrawal" form.
 		 */
 		public function handle_admin_create_request() {
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS ) ) {
 				wp_die( esc_html__( 'You do not have permission to do this.', 'woo-wallet' ) );
 			}
 			check_admin_referer( 'woo_wallet_withdrawal_create' );
@@ -2386,7 +2392,8 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			$phone           = isset( $_POST['phone'] ) ? preg_replace( '/[^0-9+]/', '', sanitize_text_field( wp_unslash( $_POST['phone'] ) ) ) : '';
 			$iban            = isset( $_POST['iban'] ) ? strtoupper( preg_replace( '/\s+/', '', sanitize_text_field( wp_unslash( $_POST['iban'] ) ) ) ) : '';
 			$reference_no    = isset( $_POST['reference_no'] ) ? sanitize_text_field( wp_unslash( $_POST['reference_no'] ) ) : '';
-			$status          = isset( $_POST['status'] ) && 'paid' === $_POST['status'] ? 'paid' : 'pending';
+			$can_process     = current_user_can( Woo_Wallet_Staff::CAP_PROCESS_WITHDRAWALS );
+			$status          = $can_process && isset( $_POST['status'] ) && 'paid' === $_POST['status'] ? 'paid' : 'pending';
 			$note            = isset( $_POST['note'] ) ? sanitize_textarea_field( wp_unslash( $_POST['note'] ) ) : '';
 			$note_visibility = isset( $_POST['note_visibility'] ) && 'public' === $_POST['note_visibility'] ? 'public' : 'private';
 
@@ -2408,7 +2415,10 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			// Validate/upload the receipt (if one was submitted) before reserving
 			// any funds, so a failed upload never leaves a debit sitting against
 			// the customer's wallet with nothing to show for it.
-			$receipt = self::handle_receipt_upload( 'receipt' );
+			$receipt = $can_process ? self::handle_receipt_upload( 'receipt' ) : array(
+				'id'    => 0,
+				'error' => '',
+			);
 			if ( $receipt['error'] ) {
 				$notice = array(
 					'type'    => 'error',
@@ -2572,7 +2582,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * Handle a standalone note added from the detail screen.
 		 */
 		public function handle_admin_add_note() {
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_ADD_NOTES ) ) {
 				wp_die( esc_html__( 'You do not have permission to do this.', 'woo-wallet' ) );
 			}
 			check_admin_referer( 'woo_wallet_withdrawal_add_note' );
@@ -2602,7 +2612,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * Handle the admin "mark paid" / "reject" action from the request detail screen.
 		 */
 		public function handle_admin_process_request() {
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_PROCESS_WITHDRAWALS ) ) {
 				wp_die( esc_html__( 'You do not have permission to do this.', 'woo-wallet' ) );
 			}
 			check_admin_referer( 'woo_wallet_withdrawal_process' );
@@ -2960,7 +2970,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * 'rejected' hook.
 		 */
 		public function handle_admin_recover_request() {
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_PROCESS_WITHDRAWALS ) ) {
 				wp_die( esc_html__( 'You do not have permission to do this.', 'woo-wallet' ) );
 			}
 			check_admin_referer( 'woo_wallet_withdrawal_recover' );

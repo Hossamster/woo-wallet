@@ -143,7 +143,7 @@ class TeraWallet_REST_Settings_Controller extends TeraWallet_REST_Controller_Bas
 	 * @return true|WP_Error
 	 */
 	public function check_permission() {
-		if ( ! current_user_can( get_wallet_user_capability() ) ) {
+		if ( ! current_user_can( Woo_Wallet_Staff::CAP_MANAGE_SETTINGS ) ) {
 			return new WP_Error(
 				'woo_wallet_rest_cannot_manage_settings',
 				__( 'Sorry, you are not allowed to manage wallet settings.', 'woo-wallet' ),

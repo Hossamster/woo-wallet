@@ -103,7 +103,7 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 			// A nonce proves the request came from this user's session, not that the
 			// user may read other people's ledgers — this handler dumps every
 			// transaction or every balance, so it needs the capability too.
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_EXPORT ) ) {
 				wp_die( -1 );
 			}
 			include_once WOO_WALLET_ABSPATH . 'includes/export/class-terawallet-csv-exporter.php';
@@ -172,7 +172,7 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 			// NOTE: get_wallet_user_capability() returns a capability *string* (truthy), so the
 			// previous `! get_wallet_user_capability()` guard never fired — it must be wrapped
 			// in current_user_can(). This fixes the Subscriber+ user/email enumeration flaw.
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_EXPORT ) ) {
 				wp_die( -1 );
 			}
 			$term    = isset( $_POST['term'] ) ? sanitize_text_field( wp_unslash( $_POST['term'] ) ) : '';
@@ -518,7 +518,7 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 			check_ajax_referer( 'woo-wallet-edit-balance-template-data', 'security' );
 			$user_id = isset( $_REQUEST['user_id'] ) ? absint( $_REQUEST['user_id'] ) : 0;
 			if ( $user_id ) {
-				if ( ! current_user_can( 'edit_user', $user_id ) ) {
+				if ( ! current_user_can( 'edit_user', $user_id ) && ! Woo_Wallet_Staff::is_limited() ) {
 					wp_die( -1 );
 				}
 				wp_send_json_success(

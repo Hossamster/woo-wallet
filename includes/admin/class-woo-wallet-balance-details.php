@@ -331,7 +331,7 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 			'edit' => '<a href="#" class="edit-wallet-balance" data-user-id="' . $user_object->ID . '">' . esc_html__( 'Edit Balance', 'woo-wallet' ) . '</a>',
 		);
 
-		if ( is_wallet_account_locked( $item['id'] ) ) {
+		if ( is_wallet_account_locked( $item['id'] ) || ! Woo_Wallet_Staff::can_adjust() ) {
 			unset( $actions['edit'] );
 		}
 
@@ -488,14 +488,22 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 				$amount      = isset( $_POST['amount'] ) ? floatval( sanitize_text_field( wp_unslash( $_POST['amount'] ) ) ) : 0;
 				$description = isset( $_POST['description'] ) ? sanitize_textarea_field( wp_unslash( $_POST['description'] ) ) : '';
 				if ( $amount && $credit_ids ) {
+					$errors = array();
 					foreach ( $credit_ids as $id ) {
-						woo_wallet()->wallet->credit( $id, $amount, $description, array( 'category' => 'adjustment' ) );
+						$result = Woo_Wallet_Staff::adjust( 'credit', $id, $amount, $description, array( 'category' => 'adjustment' ) );
+						if ( is_wp_error( $result ) ) {
+							$errors[] = $result->get_error_message();
+							break; // A refusal applies to every remaining wallet too.
+						}
+					}
+					if ( $errors ) {
+						set_transient( 'woo_wallet_staff_error_' . get_current_user_id(), $errors, 30 );
 					}
 				}
 				header( 'Refresh: 0' );
 			}
 
-			if ( 'debit' === $this->current_action() ) {
+			if ( 'debit' === $this->current_action() && current_user_can( Woo_Wallet_Staff::CAP_ADJUST_BALANCE ) ) {
 				$debit_ids   = isset( $_REQUEST['users'] ) ? array_map( 'intval', (array) $_REQUEST['users'] ) : array();
 				$amount      = isset( $_POST['amount'] ) ? floatval( sanitize_text_field( wp_unslash( $_POST['amount'] ) ) ) : 0;
 				$description = isset( $_POST['description'] ) ? sanitize_textarea_field( wp_unslash( $_POST['description'] ) ) : '';
@@ -507,7 +515,7 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 				header( 'Refresh: 0' );
 			}
 
-			if ( 'delete_log' === $this->current_action() ) {
+			if ( 'delete_log' === $this->current_action() && current_user_can( Woo_Wallet_Staff::CAP_ADJUST_BALANCE ) ) {
 				$delete_ids       = isset( $_REQUEST['users'] ) ? array_map( 'intval', (array) $_REQUEST['users'] ) : array();
 				$delete_mode      = isset( $_POST['delete_mode'] ) && 'hard' === $_POST['delete_mode'] ? 'hard' : 'soft';
 				$balance_handling = isset( $_POST['balance_handling'] ) && 'wipe' === $_POST['balance_handling'] ? 'wipe' : 'keep';
@@ -541,6 +549,12 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 				'delete_log' => __( 'Delete Log', 'woo-wallet' ),
 			)
 		);
+		if ( ! current_user_can( Woo_Wallet_Staff::CAP_ADJUST_BALANCE ) ) {
+			unset( $actions['debit'], $actions['delete_log'] );
+			if ( ! Woo_Wallet_Staff::can_adjust() ) {
+				unset( $actions['credit'] );
+			}
+		}
 		return $actions;
 	}
 	/**

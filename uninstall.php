@@ -32,6 +32,9 @@ wp_clear_scheduled_hook( 'woo_wallet_withdrawal_check_receipt_protection_cron' )
  * and to ensure only the site owner can perform this action.
  */
 if ( defined( 'WALLET_REMOVE_ALL_DATA' ) && true === WALLET_REMOVE_ALL_DATA ) {
+	remove_role( 'wallet_support_agent' );
+	delete_metadata( 'user', 0, '_woo_wallet_staff_credit_limit', '', true );
+	delete_metadata( 'user', 0, '_woo_wallet_staff_daily_limit', '', true );
 	// Tables. Must stay in sync with every CREATE TABLE in Woo_Wallet_Install — the
 	// "uninstall.php drops every table install creates" CI check enforces this.
 	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_transactions" );

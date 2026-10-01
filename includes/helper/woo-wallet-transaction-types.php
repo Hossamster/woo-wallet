@@ -87,6 +87,11 @@ function woo_wallet_get_transaction_types() {
 			'description'      => __( 'Manual admin credit or debit.', 'woo-wallet' ),
 			'default_template' => '',
 		),
+		'goodwill'               => array(
+			'label'            => __( 'Goodwill credit', 'woo-wallet' ),
+			'description'      => __( 'Small credit given by a support agent, within their limit.', 'woo-wallet' ),
+			'default_template' => '',
+		),
 		'vendor_commission'      => array(
 			'label'            => __( 'Vendor commission', 'woo-wallet' ),
 			'description'      => __( 'Marketplace commission paid into a vendor wallet.', 'woo-wallet' ),

@@ -242,6 +242,10 @@ class TransactionCsvExportTest extends WP_UnitTestCase {
 		require_once WOO_WALLET_ABSPATH . 'includes/admin/class-woo-wallet-transaction-details.php';
 		$table = new Woo_Wallet_Transaction_Details();
 
+		$manager_id = self::factory()->user->create();
+		get_userdata( $manager_id )->add_cap( 'manage_woocommerce' );
+		wp_set_current_user( $manager_id );
+
 		ob_start();
 		$table->extra_tablenav( 'top' );
 		$html = ob_get_clean();

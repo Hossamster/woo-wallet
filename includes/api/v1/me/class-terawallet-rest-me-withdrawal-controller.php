@@ -228,7 +228,7 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 			$row     = Woo_Wallet_Withdrawal::get_request( $id );
 
 			// Return 404 (not 403) so existence is not leaked to unauthorized callers.
-			if ( ! $row || ( (int) $row->user_id !== $user_id && ! current_user_can( 'manage_woocommerce' ) ) ) {
+			if ( ! $row || ( (int) $row->user_id !== $user_id && ! current_user_can( Woo_Wallet_Staff::CAP_VIEW_RECEIPTS ) ) ) {
 				return $this->error( 'rest_withdrawal_not_found', __( 'Withdrawal request not found.', 'woo-wallet' ), 404 );
 			}
 

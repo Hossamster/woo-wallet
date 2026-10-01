@@ -40,6 +40,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 												'debit'  => __( 'Debit', 'woo-wallet' ),
 											)
 										);
+										if ( Woo_Wallet_Staff::is_limited() ) {
+											unset( $payment_types['debit'] );
+										}
 										?>
 										<select class="regular-text" name="payment_type" id="payment_type">
 											<?php foreach ( $payment_types as $key => $value ) : ?>

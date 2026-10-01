@@ -119,6 +119,9 @@ final class Woo_Wallet {
 
 		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-withdrawal.php';
 
+		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-staff.php';
+		new Woo_Wallet_Staff();
+
 		// Loaded unconditionally and early: captures `user_register` before
 		// `woocommerce_init` so SSO / programmatic signups still get credited.
 		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-signup-handler.php';

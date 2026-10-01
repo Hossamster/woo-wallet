@@ -417,7 +417,7 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 			case 'id':
 				$out = '<a href="' . esc_url( $this->detail_url( $item->id ) ) . '"><strong>#' . (int) $item->id . '</strong></a>';
 				// Always the protected endpoint, never a direct file URL.
-				if ( Woo_Wallet_Withdrawal::resolve_receipt_file( $item ) ) {
+				if ( current_user_can( Woo_Wallet_Staff::CAP_VIEW_RECEIPTS ) && Woo_Wallet_Withdrawal::resolve_receipt_file( $item ) ) {
 					$out .= ' <a href="' . esc_url( Woo_Wallet_Withdrawal::receipt_view_url( $item->id ) ) . '" target="_blank" rel="noopener noreferrer" title="' . esc_attr__( 'Receipt attached — click to view', 'woo-wallet' ) . '"><span class="dashicons dashicons-paperclip" style="font-size:16px;width:16px;height:16px;vertical-align:middle;color:#2271b1;"></span></a>';
 				}
 				return $out;
@@ -456,9 +456,9 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 				$lines   = array();
 				$lines[] = '<strong>' . esc_html( $item->bank_name ) . '</strong>';
 				$lines[] = esc_html( $item->beneficiary_name );
-				$lines[] = $this->copyable_field( $item->account_number );
+				$lines[] = current_user_can( Woo_Wallet_Staff::CAP_VIEW_BANK_DETAILS ) ? $this->copyable_field( $item->account_number ) : esc_html( Woo_Wallet_Staff::bank_detail( $item->account_number ) );
 				if ( ! empty( $item->iban ) ) {
-					$lines[] = 'IBAN: ' . $this->copyable_field( $item->iban );
+					$lines[] = 'IBAN: ' . ( current_user_can( Woo_Wallet_Staff::CAP_VIEW_BANK_DETAILS ) ? $this->copyable_field( $item->iban ) : esc_html( Woo_Wallet_Staff::bank_detail( $item->iban ) ) );
 				}
 				return implode( '<br />', $lines );
 
@@ -593,7 +593,11 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 					<?php endforeach; ?>
 				</select>
 				<?php submit_button( __( 'Filter', 'woo-wallet' ), '', 'filter_action', false ); ?>
-				<?php submit_button( __( 'Export CSV', 'woo-wallet' ), 'secondary', 'export_action', false ); ?>
+				<?php
+				if ( current_user_can( Woo_Wallet_Staff::CAP_EXPORT ) ) {
+					submit_button( __( 'Export CSV', 'woo-wallet' ), 'secondary', 'export_action', false );
+				}
+				?>
 				<?php if ( $has_resettable_filters ) : ?>
 					<a href="<?php echo esc_url( $reset_url ); ?>" class="button"><?php esc_html_e( 'Reset', 'woo-wallet' ); ?></a>
 				<?php endif; ?>

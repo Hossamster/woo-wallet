@@ -300,7 +300,11 @@ class Woo_Wallet_Transaction_Details extends WP_List_Table {
 			<input type="date" name="transaction_after" value="<?php echo esc_attr( $after ); ?>" title="<?php esc_attr_e( 'From date', 'woo-wallet' ); ?>" />
 			<input type="date" name="transaction_before" value="<?php echo esc_attr( $before ); ?>" title="<?php esc_attr_e( 'To date', 'woo-wallet' ); ?>" />
 			<?php submit_button( __( 'Filter', 'woo-wallet' ), '', 'filter_action', false ); ?>
-			<?php submit_button( __( 'Export CSV', 'woo-wallet' ), 'secondary', 'export_action', false ); ?>
+			<?php
+			if ( current_user_can( Woo_Wallet_Staff::CAP_EXPORT ) ) {
+				submit_button( __( 'Export CSV', 'woo-wallet' ), 'secondary', 'export_action', false );
+			}
+			?>
 			<?php wp_nonce_field( 'woo_wallet_export_transactions', '_wpnonce', false ); ?>
 		</div>
 		<?php

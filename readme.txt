@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.8.3
+Stable tag: 1.9.0
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,11 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.9.0 =
+* New - Staff permissions. Wallet access is now split into three tiers instead of one all-or-nothing capability. Administrators can do everything. Shop managers can do everything operational (adjust balances with no limit, process withdrawals, view bank details and receipts, export, manage support agents) but no longer see or change wallet settings. A new Wallet Support Agent role can view wallets, transactions and withdrawal requests with bank details masked, add notes, log a pending withdrawal on a customer's behalf, and give goodwill credit within a personal limit.
+* New - Axfit Wallet → Staff: shop managers and administrators add support agents (an existing user keeps their current role and gains agent access on top) and set two limits per agent: the most they may credit at once, and the most they may credit per day. An agent with no limit set cannot credit at all, can never debit, and cannot credit their own wallet. Their credits are recorded under a new "Goodwill credit" transaction type.
+* Change - Wallet settings (the Settings screen and the settings REST endpoints) now require an administrator. The admin REST API (`terawallet/v1/admin/...`) is unchanged and still requires `manage_woocommerce`, so support agents have no access to it.
 
 = v1.8.3 =
 * Security - Withdrawal receipts no longer stay in the Media Library at all. When a receipt is attached to a withdrawal it is copied into receipt storage under a random key, the copy is verified byte-for-byte, only that key is saved on the request, and only then is the temporary upload deleted — so neither its original uploads URL nor its `wp/v2/media/<id>` record exists afterwards. The only way to read a receipt is the ownership-checked `terawallet/v1/me/withdrawals/{id}/receipt` endpoint. If the copy or the save fails, nothing is deleted and the request is left unchanged.

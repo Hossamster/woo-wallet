@@ -258,7 +258,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 			// Runs on admin_init, so it is reachable from every wp-admin request by
 			// any logged-in user. The nonce alone does not establish that the caller
 			// may read the whole ledger — check the capability before streaming it.
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_EXPORT ) ) {
 				return;
 			}
 			if ( isset( $_GET['action'], $_GET['nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['nonce'] ) ), 'terawallet-transaction-csv' ) && 'download_export_csv' === sanitize_text_field( wp_unslash( $_GET['action'] ) ) ) {
@@ -282,15 +282,15 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 			add_submenu_page( 'woo-wallet', __( 'Dashboard', 'woo-wallet' ), __( 'Dashboard', 'woo-wallet' ), $reports_cap, 'woo-wallet', array( $this, 'reports_page' ) );
 
 			// The former landing page (per-user wallet balances) moves to its own submenu.
-			$woo_wallet_users_hook = add_submenu_page( 'woo-wallet', __( 'Wallet Users', 'woo-wallet' ), __( 'Wallet Users', 'woo-wallet' ), get_wallet_user_capability(), 'woo-wallet-users', array( $this, 'wallet_page' ) );
+			$woo_wallet_users_hook = add_submenu_page( 'woo-wallet', __( 'Wallet Users', 'woo-wallet' ), __( 'Wallet Users', 'woo-wallet' ), Woo_Wallet_Staff::CAP_VIEW, 'woo-wallet-users', array( $this, 'wallet_page' ) );
 			add_action( "load-$woo_wallet_users_hook", array( $this, 'handle_wallet_balance_adjustment' ) );
 			add_action( "load-$woo_wallet_users_hook", array( $this, 'add_woo_wallet_details' ) );
 
-			$woo_wallet_menu_page_hook_view = add_submenu_page( 'woo-wallet', __( 'Transactions', 'woo-wallet' ), __( 'Transactions', 'woo-wallet' ), get_wallet_user_capability(), 'woo-wallet-transactions', array( $this, 'transaction_details_page' ) );
+			$woo_wallet_menu_page_hook_view = add_submenu_page( 'woo-wallet', __( 'Transactions', 'woo-wallet' ), __( 'Transactions', 'woo-wallet' ), Woo_Wallet_Staff::CAP_VIEW, 'woo-wallet-transactions', array( $this, 'transaction_details_page' ) );
 			add_action( "load-$woo_wallet_menu_page_hook_view", array( $this, 'add_woo_wallet_transaction_details_option' ) );
 			// Actions submenu removed — actions are now part of the unified Settings page (React app).
 
-			add_submenu_page( 'null', '', '', get_wallet_user_capability(), 'terawallet-exporter', array( $this, 'terawallet_exporter_page' ) );
+			add_submenu_page( 'null', '', '', Woo_Wallet_Staff::CAP_EXPORT, 'terawallet-exporter', array( $this, 'terawallet_exporter_page' ) );
 
 			if ( $this->is_referral_action_enabled() ) {
 				add_submenu_page( 'woo-wallet', __( 'Referral Report', 'woo-wallet' ), __( 'Referral Report', 'woo-wallet' ), get_wallet_user_capability(), 'woo-wallet-referral-report', array( $this, 'referral_report_page' ) );
@@ -458,7 +458,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 		 * @return void
 		 */
 		public function export_referrals_csv() {
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_EXPORT ) ) {
 				wp_die( esc_html__( 'You do not have permission to export referrals.', 'woo-wallet' ) );
 			}
 			check_admin_referer( 'woo_wallet_export_referrals' );
@@ -539,7 +539,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 		 */
 		public function export_transactions_csv() {
 			check_admin_referer( 'woo_wallet_export_transactions' );
-			if ( ! current_user_can( get_wallet_user_capability() ) ) {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_EXPORT ) ) {
 				wp_die( esc_html__( 'You do not have permission to export transactions.', 'woo-wallet' ) );
 			}
 
@@ -864,14 +864,34 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 				<h2><?php esc_html_e( 'Users wallet details', 'woo-wallet' ); ?></h2>
 				<?php do_action( 'woo_wallet_admin_page_header' ); ?>
 				<?php settings_errors(); ?>
+				<?php
+				$staff_errors = get_transient( 'woo_wallet_staff_error_' . get_current_user_id() );
+				if ( $staff_errors && is_array( $staff_errors ) ) {
+					delete_transient( 'woo_wallet_staff_error_' . get_current_user_id() );
+					echo '<div class="notice notice-error"><p>' . esc_html( implode( ' ', $staff_errors ) ) . '</p></div>';
+				}
+				if ( Woo_Wallet_Staff::is_limited() ) {
+					$staff_limits = Woo_Wallet_Staff::get_limits( get_current_user_id() );
+					echo '<div class="notice notice-info inline"><p>' . esc_html(
+						sprintf(
+							/* translators: 1: per-credit limit, 2: amount left today */
+							__( 'You can credit up to %1$s at a time, with %2$s left today.', 'woo-wallet' ),
+							wp_strip_all_tags( wc_price( $staff_limits['per_credit'] ) ),
+							wp_strip_all_tags( wc_price( max( 0, $staff_limits['daily'] - Woo_Wallet_Staff::credited_today( get_current_user_id() ) ) ) )
+						)
+					) . '</p></div>';
+				}
+				?>
 				<div class="tw-wallet-users-actions">
 					<?php do_action( 'woo_wallet_before_balance_details_table' ); ?>
+					<?php if ( current_user_can( Woo_Wallet_Staff::CAP_EXPORT ) ) : ?>
 					<p>
 						<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'terawallet-exporter' ), admin_url( 'admin.php' ) ) ); ?>" class="button">
 							<span style="vertical-align:middle;line-height:0.8;" class="dashicons dashicons-download" aria-hidden="true"></span>
 							<?php esc_html_e( 'Export', 'woo-wallet' ); ?>
 						</a>
 					</p>
+					<?php endif; ?>
 				</div>
 				<?php $this->balance_details_table->views(); ?>
 				<form id="posts-filter" method="post">
@@ -1068,7 +1088,13 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 				} else {
 					$amount  = apply_filters( 'woo_wallet_addjust_balance_amount', number_format( $amount, wc_get_price_decimals(), '.', '' ), $user_id );
 					$balance = woo_wallet()->wallet->get_wallet_balance( $user_id, 'edit' );
-					if ( 'debit' === $payment_type && apply_filters( 'woo_wallet_disallow_negative_transaction', ( $balance <= 0 || $amount > $balance ), $amount, $balance ) ) {
+					$allowed = Woo_Wallet_Staff::authorize_adjustment( $payment_type, $amount, $user_id );
+					if ( is_wp_error( $allowed ) ) {
+						$response = array(
+							'type'    => 'error',
+							'message' => $allowed->get_error_message(),
+						);
+					} elseif ( 'debit' === $payment_type && apply_filters( 'woo_wallet_disallow_negative_transaction', ( $balance <= 0 || $amount > $balance ), $amount, $balance ) ) {
 						$response = array(
 							'type'    => 'error',
 							/* translators: 1: User login. */
@@ -1101,8 +1127,14 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 							);
 						}
 					} elseif ( 'credit' === $payment_type ) {
-						$transaction_id = woo_wallet()->wallet->credit( $user_id, $amount, $description );
-						if ( $transaction_id ) {
+						$transaction_id = Woo_Wallet_Staff::adjust( 'credit', $user_id, $amount, $description );
+						if ( is_wp_error( $transaction_id ) ) {
+							$response       = array(
+								'type'    => 'error',
+								'message' => $transaction_id->get_error_message(),
+							);
+							$transaction_id = null;
+						} elseif ( $transaction_id ) {
 							do_action( 'woo_wallet_admin_adjust_balance', $transaction_id );
 							$response = array(
 								'type'    => 'success',
@@ -1468,7 +1500,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 		 * @return array
 		 */
 		public function manage_users_columns( $columns ) {
-			if ( current_user_can( get_wallet_user_capability() ) ) {
+			if ( current_user_can( Woo_Wallet_Staff::CAP_VIEW ) ) {
 				$columns['current_wallet_balance'] = __( 'Wallet Balance', 'woo-wallet' );
 			}
 			return $columns;
