@@ -192,13 +192,21 @@ class Withdrawal_Admin_Render_Test extends WP_UnitTestCase {
 	// -- 'id' column: receipt badge --------------------------------------
 
 	public function test_column_id_shows_a_receipt_badge_when_a_receipt_is_attached() {
-		$attachment_id = self::factory()->attachment->create_object( array( 'post_mime_type' => 'application/pdf' ) );
+		// A real uploaded file, not create_object()'s bare post-only fixture —
+		// the badge now depends on get_attached_file() resolving to a real
+		// file (see Woo_Wallet_Withdrawal::receipt_view_url()).
+		$attachment_id = self::factory()->attachment->create_upload_object( DIR_TESTDATA . '/images/one-blue-pixel-100x100.png' );
 		$row           = $this->seed_request( array( 'receipt_id' => $attachment_id ) );
 		$table         = new Woo_Wallet_Withdrawal_Report();
 		$html          = $table->column_default( $row, 'id' );
 
 		$this->assertStringContainsString( 'dashicons-paperclip', $html );
-		$this->assertStringContainsString( esc_url( wp_get_attachment_url( $attachment_id ) ), $html );
+		// Never the raw attachment URL — always the protected endpoint.
+		$this->assertStringNotContainsString( esc_url( wp_get_attachment_url( $attachment_id ) ), $html );
+		// Decoded because rest_url() percent-encodes the path when pretty
+		// permalinks aren't active (the default in this test environment):
+		// ?rest_route=%2Fterawallet%2Fv1%2F...
+		$this->assertStringContainsString( 'terawallet/v1/me/withdrawals/' . $row->id . '/receipt', urldecode( $html ) );
 	}
 
 	public function test_column_id_has_no_receipt_badge_without_a_receipt() {

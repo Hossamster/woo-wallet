@@ -191,6 +191,42 @@ class Financial_Integrity_Hardening_Test extends WP_Ajax_UnitTestCase {
 	}
 
 	/**
+	 * The race a plain update_option() takeover couldn't close: two
+	 * requests both read the same stale claim a moment apart, before
+	 * either writes anything. compare_and_swap_claim() is the one write in
+	 * this class where update_option()/add_option() alone aren't enough —
+	 * this is the exact concurrent-write property that has to be verified
+	 * directly, since PHPUnit itself can't run two real requests at once.
+	 * "Both callers pass the identical $expected_state" is precisely what
+	 * two independent reads of the same stale row a moment apart look
+	 * like from the inside.
+	 */
+	public function test_compare_and_swap_claim_lets_only_one_of_two_racing_callers_win() {
+		$option_name = '_transient_' . WooWallet_Idempotency::TRANSIENT_PREFIX . 'race_' . wp_generate_password( 8, false );
+		$stale_state = array(
+			'state' => 'in_progress',
+			'at'    => time() - WooWallet_Idempotency::IN_FLIGHT_TTL - 60,
+			'token' => 'a-crashed-requests-token',
+		);
+		add_option( $option_name, $stale_state, '', 'no' );
+
+		$method = new ReflectionMethod( 'WooWallet_Idempotency', 'compare_and_swap_claim' );
+
+		// Both calls pass the SAME $stale_state — exactly what two racing
+		// requests each independently reading the row a moment before
+		// either writes would both see.
+		$first_token  = $method->invoke( null, $option_name, $stale_state );
+		$second_token = $method->invoke( null, $option_name, $stale_state );
+
+		$this->assertIsString( $first_token, 'The first caller to compare-and-swap against the stale snapshot must win.' );
+		$this->assertNull( $second_token, 'A second caller racing the identical stale snapshot must lose — not also win and run the callback a second time.' );
+
+		// The row must hold exactly the winner's claim, not the loser's.
+		$final = get_option( $option_name );
+		$this->assertSame( $first_token, $final['token'] );
+	}
+
+	/**
 	 * The completed result must survive for the full TTL (this class's own
 	 * documented replay window), not just the short in-flight window used
 	 * while a request is still running.

@@ -70,6 +70,9 @@ class Woo_Wallet_Install {
 		'1.7.12' => array(
 			'woo_wallet_update_1712_db_schema',
 		),
+		'1.8.2'  => array(
+			'woo_wallet_update_182_protect_existing_receipts',
+		),
 	);
 	/**
 	 * Plugin install

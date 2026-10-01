@@ -494,3 +494,34 @@ function woo_wallet_update_1712_db_schema() {
 		$wpdb->query( "ALTER TABLE `{$table_name}` ADD KEY `idx_deleted_date` (`deleted`, `date`)" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 	}
 }
+
+/**
+ * One-time sweep: relocate every already-attached withdrawal receipt into
+ * the protected storage directory (Woo_Wallet_Withdrawal::protect_receipt_file()).
+ *
+ * That protection was added after receipts had already been accepted at
+ * their ordinary, public Media Library location for some time — without
+ * this, every receipt uploaded before the update stays there until either
+ * the retention sweep deletes it or an admin happens to re-save the request
+ * it's attached to (which no code path actually triggers). This runs it for
+ * every existing receipt_id once, on upgrade.
+ *
+ * @return void
+ */
+function woo_wallet_update_182_protect_existing_receipts() {
+	if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
+		require_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-withdrawal.php';
+	}
+
+	global $wpdb;
+	$table_name = $wpdb->base_prefix . 'woo_wallet_withdrawals';
+	if ( $table_name !== $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		return;
+	}
+
+	// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	$receipt_ids = $wpdb->get_col( "SELECT DISTINCT receipt_id FROM `{$table_name}` WHERE receipt_id > 0" );
+	foreach ( $receipt_ids as $receipt_id ) {
+		Woo_Wallet_Withdrawal::protect_receipt_file( (int) $receipt_id );
+	}
+}

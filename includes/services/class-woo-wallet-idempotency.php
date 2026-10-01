@@ -161,11 +161,17 @@ if ( ! class_exists( 'WooWallet_Idempotency' ) ) {
 				if ( ! self::is_stale( $existing ) ) {
 					return self::in_progress_error();
 				}
-				// Stale: take it over. Nobody can be mid-claim on a row that
-				// both already exists (so the atomic add_option() below isn't
-				// in play) and is old enough to have crossed IN_FLIGHT_TTL —
-				// the request that owned it is long gone one way or another.
-				return self::write_claim( $option_name );
+				// Stale: take it over — but atomically. update_option() alone
+				// would let two callers who both read this same stale row a
+				// moment apart both "win": each writes its own fresh claim in
+				// turn, and each goes on to run the callback, defeating the
+				// entire point of a claim. compare_and_swap_claim() only
+				// succeeds if the row's raw DB value is still exactly what we
+				// just read; the loser gets null and defers to whatever the
+				// winner actually left behind, same as losing the
+				// add_option() race below.
+				$token = self::compare_and_swap_claim( $option_name, $existing );
+				return null !== $token ? $token : self::resolve_after_lost_race( $option_name );
 			}
 
 			// No row yet — attempt the atomic first claim. Because option_name
@@ -188,29 +194,90 @@ if ( ! class_exists( 'WooWallet_Idempotency' ) ) {
 				return self::replay( $current );
 			}
 			if ( self::is_in_progress( $current ) && self::is_stale( $current ) ) {
-				return self::write_claim( $option_name );
+				$token = self::compare_and_swap_claim( $option_name, $current );
+				return null !== $token ? $token : self::resolve_after_lost_race( $option_name );
 			}
 			return self::in_progress_error();
 		}
 
 		/**
-		 * Overwrite $option_name with a fresh in-progress claim.
+		 * Atomically overwrite $option_name with a fresh in-progress claim —
+		 * but only if its current raw DB value is still exactly
+		 * $expected_state. A real compare-and-swap, not a blind overwrite:
+		 * the row already exists (ruling out add_option()'s UNIQUE-constraint
+		 * guarantee, which only helps when there is nothing there yet), and
+		 * there is more than one value it could legitimately be racing
+		 * against, so an unconditional update_option() can't tell "the row
+		 * still holds the stale claim I just read" apart from "someone else
+		 * already replaced it a microsecond ago" — both look identical to a
+		 * plain overwrite, which is exactly how two concurrent takeovers of
+		 * the same stale claim could otherwise both succeed and both go on to
+		 * run the callback.
+		 *
+		 * Implemented as a single UPDATE ... WHERE option_value = <exact
+		 * serialized snapshot>, bypassing update_option() (which has no
+		 * conditional form) — the affected-row count from that one query is
+		 * the CAS result: 1 means we won, 0 means the row had already
+		 * changed. wp_options has no separate "version" column to condition
+		 * on, so the exact prior value serves as the compare target; since a
+		 * fresh uniqid() token is written on every claim, the old and new
+		 * values can never coincidentally match and produce a false "no rows
+		 * changed" reading.
+		 *
+		 * @param string $option_name    Raw `_transient_*` option name.
+		 * @param array  $expected_state The exact state read a moment ago.
+		 * @return string|null The new claim's token, or null if the row had
+		 *                      already changed (lost the race).
+		 */
+		private static function compare_and_swap_claim( $option_name, array $expected_state ) {
+			global $wpdb;
+
+			$token   = uniqid( '', true );
+			$new_row = array(
+				'state' => 'in_progress',
+				'at'    => time(),
+				'token' => $token,
+			);
+
+			$affected = $wpdb->query(
+				$wpdb->prepare(
+					"UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					maybe_serialize( $new_row ),
+					$option_name,
+					maybe_serialize( $expected_state )
+				)
+			);
+
+			if ( ! $affected ) {
+				return null;
+			}
+
+			// update_option()/add_option() would normally do this for us —
+			// this write goes around them (there is no atomic "update only if
+			// the current value equals X" in the Options API itself), so keep
+			// WP's own options cache from serving the pre-CAS value to
+			// anything that calls get_option() for this row afterwards,
+			// including this class's own read_claim().
+			wp_cache_delete( $option_name, 'options' );
+
+			return $token;
+		}
+
+		/**
+		 * After losing a race to claim $option_name — add_option() found it
+		 * already there, or a compare-and-swap takeover found it already
+		 * changed — read whatever the winner actually left and defer to it,
+		 * rather than assume what happened.
 		 *
 		 * @param string $option_name Raw `_transient_*` option name.
-		 * @return string The new claim's token.
+		 * @return WP_REST_Response|WP_Error
 		 */
-		private static function write_claim( $option_name ) {
-			$token = uniqid( '', true );
-			update_option(
-				$option_name,
-				array(
-					'state' => 'in_progress',
-					'at'    => time(),
-					'token' => $token,
-				),
-				'no'
-			);
-			return $token;
+		private static function resolve_after_lost_race( $option_name ) {
+			$current = self::read_claim( $option_name );
+			if ( self::is_completed( $current ) ) {
+				return self::replay( $current );
+			}
+			return self::in_progress_error();
 		}
 
 		/**

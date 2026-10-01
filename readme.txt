@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.8.1
+Stable tag: 1.8.2
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,11 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.8.2 =
+* Security - Closed the remaining gaps in last version's receipt-privacy fix: the admin Withdrawals list's own "receipt attached" badge still linked the raw public attachment URL (missed in v1.8.1 — only the detail screen and the admin REST API were updated); protected receipts now get a random, unguessable filename rather than keeping their original name, since the `.htaccess` deny only takes effect on Apache with overrides permitted — on any other server configuration (Nginx, or Apache without AllowOverride), the filename was the only real protection left; and a daily check now verifies the storage directory is actually unreachable from the web (by requesting a real canary file placed there) rather than assuming an `.htaccess` file is enough on its own — a confirmed leak now shows a clear warning on the Withdrawals screen with instructions to add server-level protection.
+* Security - A one-time upgrade routine relocates every receipt attached to a withdrawal before this update into the new protected directory — previously, only receipts attached after updating were covered, and existing ones stayed at their public URL indefinitely.
+* Fix - Closed a narrow race in `WooWallet_Idempotency`'s stale-claim takeover: two requests arriving within the same instant, both finding the same crashed/abandoned claim, could previously both overwrite it and both go on to execute the underlying action. The takeover is now a real compare-and-swap (an atomic `UPDATE ... WHERE option_value = <the exact value just read>`), so only one of two such requests can ever win.
 
 = v1.8.1 =
 * Security - Withdrawal receipts (bank statements/proof-of-payment, often containing account numbers and IBANs) are now relocated to a `.htaccess`-denied storage directory the moment they're attached to a withdrawal, instead of staying in the public Media Library uploads path indefinitely. Every place that used to link the raw attachment URL (the admin request-detail screen, the admin REST API's `receipt_url` field) now points at the existing capability/ownership-checked `terawallet/v1/me/withdrawals/{id}/receipt` endpoint instead. Note: the `.htaccess` deny is only effective on Apache — on other web servers, the receipt is still no longer reachable at its original URL (the file itself is relocated), but the new storage directory relies on server-level configuration for its own protection, same as this plugin's existing CSV-export directory.

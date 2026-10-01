@@ -86,6 +86,20 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		const RECEIPT_CLEANUP_HOOK = 'woo_wallet_withdrawal_cleanup_receipts_cron';
 
 		/**
+		 * WP-Cron hook name for the receipt-directory protection check.
+		 *
+		 * @var string
+		 */
+		const RECEIPT_PROTECTION_CHECK_HOOK = 'woo_wallet_withdrawal_check_receipt_protection_cron';
+
+		/**
+		 * Option name the last protection-check result is cached under.
+		 *
+		 * @var string
+		 */
+		const RECEIPT_PROTECTION_STATUS_OPTION = 'woo_wallet_receipt_protection_status';
+
+		/**
 		 * DB table name (no prefix helper needed elsewhere — kept private to this class).
 		 *
 		 * @return string
@@ -128,6 +142,17 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			add_action( self::RECEIPT_CLEANUP_HOOK, array( $this, 'cleanup_old_receipts' ) );
 			add_action( 'woo_wallet_deactivated', array( $this, 'unschedule_receipt_cleanup' ) );
 
+			// Verifying the receipt directory is actually unreachable from the
+			// web makes a real outbound HTTP request — run it as its own daily
+			// cron job, never inline in a page load, and never more often than
+			// that: server config (a host migration, a changed vhost) can
+			// change over a site's life, so a one-time check isn't enough to
+			// keep trusting indefinitely, but a live check on every admin
+			// pageload would be wasteful.
+			add_action( 'init', array( $this, 'maybe_schedule_receipt_protection_check' ) );
+			add_action( self::RECEIPT_PROTECTION_CHECK_HOOK, array( $this, 'check_receipt_protection' ) );
+			add_action( 'woo_wallet_deactivated', array( $this, 'unschedule_receipt_protection_check' ) );
+
 			if ( is_admin() ) {
 				add_action( 'admin_menu', array( $this, 'admin_menu' ), 70 );
 				add_action( 'admin_enqueue_scripts', array( $this, 'admin_enqueue_scripts' ) );
@@ -138,6 +163,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				add_action( 'admin_post_woo_wallet_withdrawal_recover', array( $this, 'handle_admin_recover_request' ) );
 				add_action( 'admin_notices', array( $this, 'admin_notices' ) );
 				add_action( 'admin_notices', array( $this, 'maybe_show_stuck_processing_notice' ) );
+				add_action( 'admin_notices', array( $this, 'maybe_show_receipt_protection_notice' ) );
 			}
 		}
 
@@ -1379,7 +1405,16 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				return; // Already protected.
 			}
 
-			$new_path = trailingslashit( $protected_dir ) . wp_unique_filename( $protected_dir, wp_basename( $current_path ) );
+			// A random, unguessable filename rather than the original
+			// basename: the `.htaccess` deny in receipt_storage_dir() only
+			// takes effect on Apache with AllowOverride permitting it — on
+			// any other server (Nginx, or Apache with overrides disabled)
+			// this filename is the only thing standing between a request and
+			// the file. A recognisable original name is trivial to guess or
+			// enumerate; wp_generate_password()'s 40 characters are not.
+			$extension   = pathinfo( $current_path, PATHINFO_EXTENSION );
+			$random_name = wp_generate_password( 40, false, false ) . ( $extension ? '.' . $extension : '' );
+			$new_path    = trailingslashit( $protected_dir ) . wp_unique_filename( $protected_dir, $random_name );
 
 			if ( ! @rename( $current_path, $new_path ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.rename_rename
 				return;
@@ -1402,6 +1437,145 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				unset( $metadata['sizes'] );
 				wp_update_attachment_metadata( $attachment_id, $metadata );
 			}
+		}
+
+		/**
+		 * Schedule the daily receipt-protection check if it isn't already
+		 * scheduled. Runs on `init` rather than only on plugin activation, so
+		 * an in-place code update (no re-activation) still gets it scheduled.
+		 */
+		public function maybe_schedule_receipt_protection_check() {
+			if ( ! wp_next_scheduled( self::RECEIPT_PROTECTION_CHECK_HOOK ) ) {
+				wp_schedule_event( time(), 'daily', self::RECEIPT_PROTECTION_CHECK_HOOK );
+			}
+		}
+
+		/**
+		 * Unschedule the check on plugin deactivation (hooked to
+		 * `woo_wallet_deactivated`, fired from Woo_Wallet::deactivate_plugin()).
+		 */
+		public function unschedule_receipt_protection_check() {
+			$timestamp = wp_next_scheduled( self::RECEIPT_PROTECTION_CHECK_HOOK );
+			if ( $timestamp ) {
+				wp_unschedule_event( $timestamp, self::RECEIPT_PROTECTION_CHECK_HOOK );
+			}
+		}
+
+		/**
+		 * The WP-Cron handler: actually verify receipt_storage_dir() and
+		 * cache the result. Never call this synchronously from a page
+		 * load — it makes a real outbound HTTP request.
+		 */
+		public function check_receipt_protection() {
+			update_option(
+				self::RECEIPT_PROTECTION_STATUS_OPTION,
+				array(
+					'status'     => self::verify_receipt_storage_protection(),
+					'checked_at' => time(),
+				),
+				false
+			);
+		}
+
+		/**
+		 * Whether receipt_storage_dir() has been confirmed unreachable from
+		 * the web. Never makes an HTTP request itself — reads whatever
+		 * check_receipt_protection() last found, which may be:
+		 *  - 'protected': a real request for a canary file placed in the
+		 *    directory came back without the file's content (a 403, a 404,
+		 *    a connection failure at the server level — all count).
+		 *  - 'leaking': the canary's exact content came back in a 200 —
+		 *    the deny rule isn't in effect on this server, or isn't
+		 *    supported (Nginx doesn't read .htaccess at all; Apache with
+		 *    AllowOverride disabled ignores it too).
+		 *  - 'unknown': the check itself couldn't run or couldn't complete
+		 *    (e.g. this site blocks outbound loopback HTTP requests) — this
+		 *    is deliberately kept distinct from 'protected': the mere
+		 *    inability to verify is not evidence of safety, but it also
+		 *    isn't evidence of a leak, so it is not treated (or reported)
+		 *    the same way a confirmed leak is.
+		 *  - null: the daily cron job hasn't run yet (e.g. right after
+		 *    activation).
+		 *
+		 * @return string|null
+		 */
+		public static function receipt_storage_protection_status() {
+			$status = get_option( self::RECEIPT_PROTECTION_STATUS_OPTION );
+			return is_array( $status ) && isset( $status['status'] ) ? $status['status'] : null;
+		}
+
+		/**
+		 * Actually perform the check described in
+		 * receipt_storage_protection_status()'s docblock: write a canary file
+		 * with random, unpredictable content into receipt_storage_dir(),
+		 * request its public URL over real HTTP, and confirm the response
+		 * does not echo that content back.
+		 *
+		 * @return string One of 'protected', 'leaking', 'unknown'.
+		 */
+		private static function verify_receipt_storage_protection() {
+			$dir        = self::receipt_storage_dir();
+			$upload_dir = wp_upload_dir();
+
+			$canary_name    = 'canary-' . wp_generate_password( 12, false, false ) . '.txt';
+			$canary_content = wp_generate_password( 32, false, false );
+			$canary_path    = trailingslashit( $dir ) . $canary_name;
+
+			if ( false === @file_put_contents( $canary_path, $canary_content ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+				return 'unknown';
+			}
+
+			$canary_url = trailingslashit( $upload_dir['baseurl'] ) . 'woo-wallet-receipts/' . $canary_name;
+			$response   = wp_remote_get(
+				$canary_url,
+				array(
+					'timeout'   => 5,
+					'sslverify' => false,
+				)
+			);
+
+			@unlink( $canary_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.unlink_unlink
+
+			if ( is_wp_error( $response ) ) {
+				// Could not even connect to check — e.g. this site blocks its
+				// own outbound loopback requests, a common managed-hosting
+				// restriction unrelated to whether the directory is exposed.
+				// Not being able to prove it's protected is not the same
+				// claim as proving it's leaking; report neither.
+				return 'unknown';
+			}
+
+			$code = (int) wp_remote_retrieve_response_code( $response );
+			if ( 200 === $code && wp_remote_retrieve_body( $response ) === $canary_content ) {
+				return 'leaking';
+			}
+
+			return 'protected';
+		}
+
+		/**
+		 * A loud, non-dismissible warning on the Withdrawals screen when the
+		 * receipt directory is confirmed reachable from the web — deliberately
+		 * NOT shown for the 'unknown' status (an inconclusive check is not
+		 * the same finding as a confirmed leak, and warning every admin on
+		 * every host that merely blocks self-requests would train them to
+		 * ignore this notice). Random filenames (see protect_receipt_file())
+		 * still apply regardless of this check's outcome — this notice is
+		 * about the .htaccess layer specifically, not the only thing
+		 * standing between a request and a receipt.
+		 */
+		public function maybe_show_receipt_protection_notice() {
+			$screen = get_current_screen();
+			if ( ! $screen || woo_wallet_get_screen_id( 'woo-wallet-withdrawals' ) !== $screen->id ) {
+				return;
+			}
+			if ( 'leaking' !== self::receipt_storage_protection_status() ) {
+				return;
+			}
+			printf(
+				'<div class="notice notice-error"><p>%s</p></div>',
+				esc_html__( 'Wallet withdrawal receipts are stored in a directory this server does not restrict access to (wp-content/uploads/woo-wallet-receipts/). Anyone who obtains a receipt\'s exact file address could download it directly, bypassing the usual permission checks. Ask your host to add a server-level rule blocking direct access to that directory (an .htaccess "deny from all" already exists there, but this server either does not read it or is configured to ignore it).', 'woo-wallet' )
+			);
 		}
 
 		/**
