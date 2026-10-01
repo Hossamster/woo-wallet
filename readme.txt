@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.9.0
+Stable tag: 1.9.1
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,9 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.9.1 =
+* Fix - A Wallet Support Agent now keeps the WordPress admin bar and wp-admin access. WooCommerce hides both from anyone without `edit_posts` or `manage_woocommerce`, which left a newly added agent looking like an ordinary customer with no way into the wallet screens.
 
 = v1.9.0 =
 * New - Staff permissions. Wallet access is now split into three tiers instead of one all-or-nothing capability. Administrators can do everything. Shop managers can do everything operational (adjust balances with no limit, process withdrawals, view bank details and receipts, export, manage support agents) but no longer see or change wallet settings. A new Wallet Support Agent role can view wallets, transactions and withdrawal requests with bank details masked, add notes, log a pending withdrawal on a customer's behalf, and give goodwill credit within a personal limit.
