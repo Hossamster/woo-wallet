@@ -65,6 +65,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 						<div class="inner">
 							<input type="hidden" name="user_id" value="{{ data.user_id }}" />
 							<?php wp_nonce_field( 'woo-wallet-admin-adjust-balance', 'woo-wallet-admin-adjust-balance' ); ?>
+							<?php Woo_Wallet_Staff::form_token_field(); ?>
 							<?php submit_button( __( 'Update balance', 'woo-wallet' ), 'primary', 'submit', false, array( 'style' => 'float:left;' ) ); ?>
 							<strong class="current-balance"><?php esc_html_e( 'Current balance: ', 'woo-wallet' ); ?>{{{data.current_balance}}}</strong>
 						</div>

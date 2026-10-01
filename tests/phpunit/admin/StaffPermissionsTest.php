@@ -190,6 +190,75 @@ class Staff_Permissions_Test extends WP_UnitTestCase {
 		$this->assertSame( 500.0, $this->balance() );
 	}
 
+	// -- double submission ---------------------------------------------------
+
+	public function test_a_form_token_can_only_be_claimed_once() {
+		wp_set_current_user( $this->manager_id );
+		$token = wp_generate_uuid4();
+
+		$this->assertTrue( Woo_Wallet_Staff::claim_form_token( $token ) );
+		$this->assertFalse( Woo_Wallet_Staff::claim_form_token( $token ) );
+		$this->assertFalse( Woo_Wallet_Staff::claim_form_token( $token ) );
+		$this->assertFalse( Woo_Wallet_Staff::claim_form_token( '' ) );
+		$this->assertFalse( Woo_Wallet_Staff::claim_form_token( 'not-a-token' ) );
+	}
+
+	/**
+	 * The reported bug: one "Update balance" click that reached the server
+	 * three times credited the wallet three times.
+	 */
+	public function test_the_same_edit_balance_form_submitted_three_times_credits_once() {
+		require_once ABSPATH . 'wp-admin/includes/template.php';
+		if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
+			require_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-admin.php';
+		}
+		wp_set_current_user( $this->manager_id );
+
+		$_POST = array(
+			'woo-wallet-admin-adjust-balance' => wp_create_nonce( 'woo-wallet-admin-adjust-balance' ),
+			Woo_Wallet_Staff::FORM_TOKEN_FIELD => wp_generate_uuid4(),
+			'user_id'                         => $this->customer_id,
+			'balance_amount'                  => '200',
+			'payment_type'                    => 'credit',
+			'payment_description'             => '',
+		);
+		try {
+			Woo_Wallet_Admin::instance()->handle_wallet_balance_adjustment();
+			Woo_Wallet_Admin::instance()->handle_wallet_balance_adjustment();
+			Woo_Wallet_Admin::instance()->handle_wallet_balance_adjustment();
+			$this->assertSame( 700.0, $this->balance() );
+
+			// A fresh form (new token) is a genuinely new adjustment.
+			$_POST[ Woo_Wallet_Staff::FORM_TOKEN_FIELD ] = wp_generate_uuid4();
+			Woo_Wallet_Admin::instance()->handle_wallet_balance_adjustment();
+			$this->assertSame( 900.0, $this->balance() );
+
+			// And a form with no token at all moves nothing.
+			unset( $_POST[ Woo_Wallet_Staff::FORM_TOKEN_FIELD ] );
+			Woo_Wallet_Admin::instance()->handle_wallet_balance_adjustment();
+			$this->assertSame( 900.0, $this->balance() );
+		} finally {
+			$_POST = array();
+		}
+	}
+
+	/**
+	 * WooCommerce only lets a shop manager `edit_user` customer accounts, so
+	 * gating the edit-balance dialog on that capability made it silently do
+	 * nothing for every other user. The wallet permission is what applies.
+	 */
+	public function test_a_real_shop_manager_can_adjust_wallets_of_users_they_cannot_edit() {
+		$shop_manager = self::factory()->user->create( array( 'role' => 'shop_manager' ) );
+		$subscriber   = self::factory()->user->create( array( 'role' => 'subscriber' ) );
+		wp_set_current_user( $shop_manager );
+
+		$this->assertFalse( current_user_can( 'edit_user', $subscriber ), 'Precondition: WooCommerce does not let a shop manager edit this account.' );
+		$this->assertTrue( Woo_Wallet_Staff::can_adjust() );
+		$this->assertIsInt( Woo_Wallet_Staff::adjust( 'credit', $subscriber, 75, 'credit to a non-customer' ) );
+		$this->assertSame( 75.0, (float) woo_wallet()->wallet->get_wallet_balance( $subscriber, 'edit' ) );
+		$this->assertFalse( user_can( $shop_manager, Woo_Wallet_Staff::CAP_MANAGE_SETTINGS ) );
+	}
+
 	// -- managing agents ---------------------------------------------------
 
 	public function test_save_agent_adds_the_role_on_top_of_the_existing_one() {

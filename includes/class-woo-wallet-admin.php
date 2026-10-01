@@ -895,6 +895,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 				</div>
 				<?php $this->balance_details_table->views(); ?>
 				<form id="posts-filter" method="post">
+					<?php Woo_Wallet_Staff::form_token_field(); ?>
 					<?php $this->balance_details_table->search_box( __( 'Search Users', 'woo-wallet' ), 'search_id' ); ?>
 					<?php $this->balance_details_table->display(); ?>
 				</form>
@@ -1065,6 +1066,12 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 		 */
 		public function handle_wallet_balance_adjustment() {
 			if ( isset( $_POST['woo-wallet-admin-adjust-balance'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['woo-wallet-admin-adjust-balance'] ) ), 'woo-wallet-admin-adjust-balance' ) ) {
+				// The same form arriving more than once (a double click, or the
+				// browser re-sending the POST on refresh) must only move money once.
+				if ( ! Woo_Wallet_Staff::claim_submitted_form_token() ) {
+					add_settings_error( '', 'terawallet', __( 'This balance update was already submitted, so it was not applied a second time. Check the customer\'s transactions to confirm the result.', 'woo-wallet' ), 'warning' );
+					return;
+				}
 				$transaction_id = null;
 				$user_id        = isset( $_POST['user_id'] ) ? absint( $_POST['user_id'] ) : 0;
 				$amount         = isset( $_POST['balance_amount'] ) ? sanitize_text_field( wp_unslash( $_POST['balance_amount'] ) ) : 0;

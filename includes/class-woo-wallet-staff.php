@@ -61,6 +61,11 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 		const GOODWILL_CATEGORY = 'goodwill';
 
 		/**
+		 * Name of the hidden one-time token field on money-moving admin forms.
+		 */
+		const FORM_TOKEN_FIELD = 'woo_wallet_form_token';
+
+		/**
 		 * Hook up.
 		 */
 		public function __construct() {
@@ -334,6 +339,49 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 			} finally {
 				$wpdb->query( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $lock ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			}
+		}
+
+		/* ---------------- one-time form tokens ---------------- */
+
+		/**
+		 * Print a hidden one-time token for a money-moving admin form. A
+		 * nonce stays valid for hours and so does nothing to stop the same
+		 * form being submitted twice (a double click, or a browser re-sending
+		 * the POST on refresh); this token can only ever be used once.
+		 */
+		public static function form_token_field() {
+			printf( '<input type="hidden" name="%s" value="%s" />', esc_attr( self::FORM_TOKEN_FIELD ), esc_attr( wp_generate_uuid4() ) );
+		}
+
+		/**
+		 * Claim a form's one-time token. Atomic: of any number of identical
+		 * submissions arriving together, exactly one gets true.
+		 *
+		 * @param string $token The submitted token.
+		 * @return bool True the first time a token is seen; false for a repeat or a missing/malformed token.
+		 */
+		public static function claim_form_token( $token ) {
+			$token = is_string( $token ) ? $token : '';
+			if ( ! wp_is_uuid( $token, 4 ) ) {
+				return false;
+			}
+			$key = 'wwform_' . md5( get_current_user_id() . '|' . $token );
+			if ( ! add_option( '_transient_' . $key, time(), '', 'no' ) ) {
+				return false;
+			}
+			// Paired timeout row, so WordPress's own expired-transient cleanup removes it.
+			add_option( '_transient_timeout_' . $key, time() + DAY_IN_SECONDS, '', 'no' );
+			return true;
+		}
+
+		/**
+		 * Claim the one-time token submitted with the current request.
+		 *
+		 * @return bool
+		 */
+		public static function claim_submitted_form_token() {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- callers verify their own nonce first.
+			return self::claim_form_token( isset( $_POST[ self::FORM_TOKEN_FIELD ] ) ? sanitize_text_field( wp_unslash( $_POST[ self::FORM_TOKEN_FIELD ] ) ) : '' );
 		}
 
 		/* ---------------- display helpers ---------------- */

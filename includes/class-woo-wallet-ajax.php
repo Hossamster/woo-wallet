@@ -518,7 +518,10 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 			check_ajax_referer( 'woo-wallet-edit-balance-template-data', 'security' );
 			$user_id = isset( $_REQUEST['user_id'] ) ? absint( $_REQUEST['user_id'] ) : 0;
 			if ( $user_id ) {
-				if ( ! current_user_can( 'edit_user', $user_id ) && ! Woo_Wallet_Staff::is_limited() ) {
+				// Not `edit_user`: WooCommerce only lets a shop manager edit
+				// customer accounts, which silently blocked adjusting anyone
+				// else's wallet. What matters here is the wallet permission.
+				if ( ! Woo_Wallet_Staff::can_adjust() ) {
 					wp_die( -1 );
 				}
 				wp_send_json_success(

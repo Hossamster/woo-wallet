@@ -483,6 +483,12 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 	 */
 	private function process_bulk_actions() {
 		if ( isset( $_POST['_wpnonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ), 'bulk-transactions' ) ) {
+			// The same form arriving more than once (a double click, or the
+			// browser re-sending the POST) must only move money once.
+			$is_money_action = in_array( $this->current_action(), array( 'credit', 'debit' ), true );
+			if ( $is_money_action && ! Woo_Wallet_Staff::claim_submitted_form_token() ) {
+				return;
+			}
 			if ( 'credit' === $this->current_action() ) {
 				$credit_ids  = isset( $_REQUEST['users'] ) ? array_map( 'intval', (array) $_REQUEST['users'] ) : array();
 				$amount      = isset( $_POST['amount'] ) ? floatval( sanitize_text_field( wp_unslash( $_POST['amount'] ) ) ) : 0;
@@ -696,9 +702,24 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 					$listForm.find('input[name="amount"], input[name="description"]').remove();
 					$listForm.append($('<input>').attr({ type: 'hidden', name: 'amount', value: amount }));
 					$listForm.append($('<input>').attr({ type: 'hidden', name: 'description', value: description }));
+					if ($listForm.data('wooWalletSubmitting')) {
+						return false;
+					}
+					$listForm.data('wooWalletSubmitting', true);
 					$listForm.data('wooWalletCreditDebitConfirmed', true);
 					$('.wc-backbone-modal-backdrop.modal-close').trigger('click');
 					$listForm[0].submit();
+				});
+				// One submission per click: a second click while the first is
+				// still on its way would otherwise send the form again.
+				$(document).on('submit', '.woo-wallet-edit-balance form', function () {
+					var $form = $(this);
+					if ($form.data('wooWalletSubmitting')) {
+						return false;
+					}
+					$form.data('wooWalletSubmitting', true);
+					$form.find('[type="submit"]').css({ opacity: 0.6, 'pointer-events': 'none' });
+					return true;
 				});
 				$(document).on('click', '.edit-wallet-balance', function (event) {
 					event.preventDefault();
