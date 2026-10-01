@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.9.1
+Stable tag: 1.9.2
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,10 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.9.2 =
+* Fix - A balance adjustment submitted more than once (a double click on "Update balance", or the browser re-sending the form) was applied every time it reached the server. Every money-moving form on the Wallet Users screen (Edit Balance, and the bulk Credit / Debit actions) now carries a one-time token, so a repeated submission is refused instead of crediting or debiting again, and the button is disabled after the first click.
+* Fix - A shop manager could only open Edit Balance for customer accounts (and their own): the dialog was gated on WordPress's `edit_user` capability, which WooCommerce restricts for shop managers, so for any other user it silently did nothing. It now checks the wallet permission instead.
 
 = v1.9.1 =
 * Fix - A Wallet Support Agent now keeps the WordPress admin bar and wp-admin access. WooCommerce hides both from anyone without `edit_posts` or `manage_woocommerce`, which left a newly added agent looking like an ordinary customer with no way into the wallet screens.
