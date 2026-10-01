@@ -66,6 +66,7 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 		public function __construct() {
 			add_filter( 'user_has_cap', array( __CLASS__, 'grant_capabilities' ), 10, 4 );
 			add_action( 'init', array( __CLASS__, 'ensure_role' ) );
+			add_filter( 'woocommerce_disable_admin_bar', array( __CLASS__, 'keep_admin_access' ) );
 			add_action( 'admin_menu', array( $this, 'admin_menu' ), 60 );
 			add_action( 'admin_post_woo_wallet_staff_save', array( $this, 'handle_save' ) );
 			add_action( 'admin_post_woo_wallet_staff_remove', array( $this, 'handle_remove' ) );
@@ -153,6 +154,19 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 				$caps[ $cap ] = true;
 			}
 			add_role( self::ROLE, __( 'Wallet Support Agent', 'woo-wallet' ), $caps );
+		}
+
+		/**
+		 * WooCommerce hides the admin bar from (and can lock wp-admin for)
+		 * anyone without `edit_posts` or `manage_woocommerce`, which would
+		 * leave a support agent looking like an ordinary customer with no
+		 * way into the wallet screens.
+		 *
+		 * @param bool $disable Whether WooCommerce should apply that restriction.
+		 * @return bool
+		 */
+		public static function keep_admin_access( $disable ) {
+			return current_user_can( self::CAP_VIEW ) ? false : $disable;
 		}
 
 		/* ---------------- limits ---------------- */

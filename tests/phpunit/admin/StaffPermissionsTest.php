@@ -78,6 +78,19 @@ class Staff_Permissions_Test extends WP_UnitTestCase {
 		}
 	}
 
+	/**
+	 * WooCommerce hides the admin bar from users without edit_posts or
+	 * manage_woocommerce — a support agent must still get it, or they have
+	 * no way into the wallet screens.
+	 */
+	public function test_support_agent_keeps_the_admin_bar_but_a_customer_does_not() {
+		wp_set_current_user( $this->agent_id );
+		$this->assertTrue( wc_disable_admin_bar( true ) );
+
+		wp_set_current_user( $this->customer_id );
+		$this->assertFalse( wc_disable_admin_bar( true ) );
+	}
+
 	// -- balance adjustments ------------------------------------------------
 
 	public function test_shop_manager_can_credit_and_debit_without_a_limit() {
