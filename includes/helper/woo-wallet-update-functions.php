@@ -496,32 +496,31 @@ function woo_wallet_update_1712_db_schema() {
 }
 
 /**
- * One-time sweep: relocate every already-attached withdrawal receipt into
- * the protected storage directory (Woo_Wallet_Withdrawal::protect_receipt_file()).
+ * 1.8.3: add `receipt_key` to `woo_wallet_withdrawals` and move every
+ * receipt still held as a Media Library attachment (receipt_id) into
+ * receipt storage.
  *
- * That protection was added after receipts had already been accepted at
- * their ordinary, public Media Library location for some time — without
- * this, every receipt uploaded before the update stays there until either
- * the retention sweep deletes it or an admin happens to re-save the request
- * it's attached to (which no code path actually triggers). This runs it for
- * every existing receipt_id once, on upgrade.
+ * Receipts used to stay in the Media Library, where their file URL and
+ * their wp/v2/media record remained reachable. Each one is copied into
+ * receipt storage and verified, its key saved on the row, and only then is
+ * the attachment deleted — see Woo_Wallet_Withdrawal::migrate_legacy_receipts().
+ * A receipt that cannot be copied is left untouched and retried by the daily
+ * receipt cron.
  *
  * @return void
  */
-function woo_wallet_update_182_protect_existing_receipts() {
+function woo_wallet_update_183_receipts_out_of_media_library() {
+	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+	dbDelta( Woo_Wallet_Install::get_withdrawals_schema() );
+
 	if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		require_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-withdrawal.php';
 	}
 
 	global $wpdb;
 	$table_name = $wpdb->base_prefix . 'woo_wallet_withdrawals';
-	if ( $table_name !== $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+	if ( ! $wpdb->get_var( "SHOW COLUMNS FROM `{$table_name}` LIKE 'receipt_key'" ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		return;
 	}
-
-	// phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-	$receipt_ids = $wpdb->get_col( "SELECT DISTINCT receipt_id FROM `{$table_name}` WHERE receipt_id > 0" );
-	foreach ( $receipt_ids as $receipt_id ) {
-		Woo_Wallet_Withdrawal::protect_receipt_file( (int) $receipt_id );
-	}
+	Woo_Wallet_Withdrawal::migrate_legacy_receipts();
 }

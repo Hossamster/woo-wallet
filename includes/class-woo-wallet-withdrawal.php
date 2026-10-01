@@ -100,6 +100,27 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		const RECEIPT_PROTECTION_STATUS_OPTION = 'woo_wallet_receipt_protection_status';
 
 		/**
+		 * Post meta marking a Media Library attachment as a temporary,
+		 * wallet-owned receipt upload — the only kind of attachment that may
+		 * be attached to a withdrawal (and deleted in the process).
+		 *
+		 * @var string
+		 */
+		const RECEIPT_UPLOAD_META = '_woo_wallet_receipt_upload';
+
+		/**
+		 * Allowed receipt file types, extension => mime.
+		 *
+		 * @var string[]
+		 */
+		const RECEIPT_MIMES = array(
+			'pdf'  => 'application/pdf',
+			'png'  => 'image/png',
+			'jpg'  => 'image/jpeg',
+			'jpeg' => 'image/jpeg',
+		);
+
+		/**
 		 * DB table name (no prefix helper needed elsewhere — kept private to this class).
 		 *
 		 * @return string
@@ -737,7 +758,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 *     @type string       $bank_name    Exact bank name match (see get_configured_banks()).
 		 *     @type string       $created_by   'self' (customer self-service) or 'staff' (admin-logged).
 		 *     @type int          $processed_by Staff member who processed the request.
-		 *     @type string       $receipt      'has' (receipt_id > 0) or 'missing' (no receipt).
+		 *     @type string       $receipt      'has' (a receipt is attached) or 'missing' (no receipt).
 		 *     @type float        $min_amount   Minimum requested amount.
 		 *     @type float        $max_amount   Maximum requested amount.
 		 *     @type string       $after        'Y-m-d H:i:s' lower bound on date_created.
@@ -821,9 +842,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			}
 			if ( ! empty( $args['receipt'] ) ) {
 				if ( 'has' === $args['receipt'] ) {
-					$where[] = 'receipt_id > 0';
+					$where[] = "( receipt_key <> '' OR receipt_id > 0 )";
 				} elseif ( 'missing' === $args['receipt'] ) {
-					$where[] = '(receipt_id IS NULL OR receipt_id = 0)';
+					$where[] = "( receipt_key = '' AND ( receipt_id IS NULL OR receipt_id = 0 ) )";
 				}
 			}
 			if ( isset( $args['min_amount'] ) && is_numeric( $args['min_amount'] ) ) {
@@ -1088,7 +1109,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					$processed_by_str = $staff ? $staff->display_name : '#' . (int) $row->processed_by;
 				}
 
-				$has_receipt_str = ( ! empty( $row->receipt_id ) && (int) $row->receipt_id > 0 ) ? __( 'Yes', 'woo-wallet' ) : __( 'No', 'woo-wallet' );
+				$has_receipt_str = self::has_receipt( $row ) ? __( 'Yes', 'woo-wallet' ) : __( 'No', 'woo-wallet' );
 
 				fputcsv(
 					$output,
@@ -1245,14 +1266,19 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Handle an uploaded receipt file (PDF/PNG/JPG) as a Media Library
-		 * attachment, restricted to those three types regardless of the
-		 * site's normal upload_mimes allowlist.
+		 * Handle an uploaded receipt file (PDF/PNG/JPG) through WordPress's
+		 * own upload validation, restricted to those three types regardless
+		 * of the site's normal upload_mimes allowlist.
+		 *
+		 * The resulting Media Library attachment is only a staging area: it
+		 * is marked as a wallet-owned temporary upload (RECEIPT_UPLOAD_META)
+		 * and is deleted again the moment the receipt is attached to a
+		 * withdrawal — see stage_receipt().
 		 *
 		 * @param string $file_field `$_FILES` key.
 		 * @return array {id:int, error:string} id is 0 when no file was submitted or empty on error (error explains why).
 		 */
-		private static function maybe_handle_receipt_upload( $file_field ) {
+		public static function handle_receipt_upload( $file_field ) {
 			if ( empty( $_FILES[ $file_field ] ) || empty( $_FILES[ $file_field ]['name'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
 				return array(
 					'id'    => 0,
@@ -1260,22 +1286,16 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
-			$allowed = array(
-				'pdf'  => 'application/pdf',
-				'png'  => 'image/png',
-				'jpg'  => 'image/jpeg',
-				'jpeg' => 'image/jpeg',
-			);
-
 			require_once ABSPATH . 'wp-admin/includes/image.php';
 			require_once ABSPATH . 'wp-admin/includes/file.php';
 			require_once ABSPATH . 'wp-admin/includes/media.php';
 
-			$restrict_mimes = function ( $mimes ) use ( $allowed ) {
-				return $allowed;
+			$restrict_mimes = function () {
+				return self::RECEIPT_MIMES;
 			};
 			add_filter( 'upload_mimes', $restrict_mimes );
-			$attachment_id = media_handle_upload( $file_field, 0, array(), array( 'test_form' => false ) );
+			$overrides     = apply_filters( 'woo_wallet_receipt_upload_overrides', array( 'test_form' => false ) );
+			$attachment_id = media_handle_upload( $file_field, 0, array(), $overrides );
 			remove_filter( 'upload_mimes', $restrict_mimes );
 
 			if ( is_wp_error( $attachment_id ) ) {
@@ -1284,6 +1304,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					'error' => $attachment_id->get_error_message(),
 				);
 			}
+			update_post_meta( (int) $attachment_id, self::RECEIPT_UPLOAD_META, get_current_user_id() );
 			return array(
 				'id'    => (int) $attachment_id,
 				'error' => '',
@@ -1306,9 +1327,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * The URL to view/download a withdrawal's receipt — always the
 		 * protected TeraWallet_REST_Me_Withdrawal_Controller::get_receipt()
 		 * endpoint (checks ownership or manage_woocommerce, streams the file
-		 * from its real disk path), never wp_get_attachment_url() — see
-		 * protect_receipt_file()'s docblock for why that URL must not be
-		 * exposed anywhere once a receipt is attached to a withdrawal.
+		 * from its real disk path), never a direct file URL.
 		 *
 		 * @param int  $request_id    Withdrawal request id.
 		 * @param bool $include_nonce Append a `_wpnonce` query arg, for a
@@ -1334,20 +1353,20 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Directory receipts are relocated into once attached to a
-		 * withdrawal — `.htaccess`-denied, same pattern as
-		 * TeraWallet_CSV_Exporter::get_export_dir(). Receipts contain bank
-		 * account numbers, IBANs and proof-of-payment documents, so — unlike
-		 * an ordinary Media Library upload — they must never be reachable at
-		 * a guessable public URL, only through
-		 * TeraWallet_REST_Me_Withdrawal_Controller::get_receipt() (which
-		 * checks ownership/capability and reads the file by its real disk
-		 * path, so it keeps working regardless of which directory the file
-		 * actually lives in).
+		 * The fallback receipt directory inside uploads — `.htaccess`-denied,
+		 * same pattern as TeraWallet_CSV_Exporter::get_export_dir(). Used
+		 * whenever no valid private directory is configured (see
+		 * external_receipt_dir()), so the feature keeps working on hosts
+		 * with no writable path outside the web root.
+		 *
+		 * The deny rule only takes effect on Apache with AllowOverride; on
+		 * any other server the random receipt_key filename is the only thing
+		 * standing between a request and the file, which is what the daily
+		 * canary check (check_receipt_protection()) reports on.
 		 *
 		 * @return string Absolute path, no trailing slash.
 		 */
-		public static function receipt_storage_dir() {
+		public static function fallback_receipt_dir() {
 			$upload_dir = wp_upload_dir();
 			$dir        = trailingslashit( $upload_dir['basedir'] ) . 'woo-wallet-receipts';
 
@@ -1366,76 +1385,379 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Physically relocate a receipt attachment out of the public
-		 * uploads tree into receipt_storage_dir(), so its original,
-		 * guessable public Media Library URL stops resolving. Called once,
-		 * the moment a receipt_id is actually attached to a withdrawal row
-		 * (admin_create()/admin_process()) — not at upload time, since an
-		 * attachment a caller merely uploaded but never successfully
-		 * attached to anything shouldn't be moved out from under them.
+		 * The raw, unvalidated private-directory setting: the
+		 * WOO_WALLET_RECEIPTS_DIR constant from wp-config.php (filterable).
 		 *
-		 * Idempotent: a no-op if the file already lives in the protected
-		 * directory. Fails soft (leaves the file exactly where it was) on
-		 * any filesystem error, rather than risk a half-moved attachment
-		 * whose meta and physical location disagree.
-		 *
-		 * Also strips any generated intermediate image sizes (thumbnails)
-		 * rather than relocating them too: nothing in this plugin ever
-		 * requests a receipt at any size but the original, so a thumbnail
-		 * left behind in the old public location, at a wholly predictable
-		 * filename, would otherwise go on leaking the image content even
-		 * after the original file is protected.
-		 *
-		 * @param int $attachment_id Media Library attachment id.
-		 * @return void
+		 * @return string Empty when not configured.
 		 */
-		public static function protect_receipt_file( $attachment_id ) {
+		private static function configured_receipt_dir() {
+			$dir = defined( 'WOO_WALLET_RECEIPTS_DIR' ) ? WOO_WALLET_RECEIPTS_DIR : '';
+			$dir = apply_filters( 'woo_wallet_receipts_dir', $dir );
+			return is_string( $dir ) ? trim( $dir ) : '';
+		}
+
+		/**
+		 * The optional private receipt directory, only when it is actually
+		 * usable AND actually private: it must exist, be writable, and live
+		 * outside the WordPress root, wp-content and uploads — a directory
+		 * inside any of those is web-reachable, so pointing the constant at
+		 * one would only give a false sense of safety.
+		 *
+		 * @return string Absolute path, no trailing slash; empty when not configured or not valid.
+		 */
+		public static function external_receipt_dir() {
+			$configured = self::configured_receipt_dir();
+			if ( '' === $configured ) {
+				return '';
+			}
+			$real = realpath( $configured );
+			if ( ! $real || ! is_dir( $real ) || ! wp_is_writable( $real ) ) {
+				return '';
+			}
+			$real       = untrailingslashit( wp_normalize_path( $real ) );
+			$upload_dir = wp_upload_dir();
+			foreach ( array( ABSPATH, WP_CONTENT_DIR, $upload_dir['basedir'] ) as $public_root ) {
+				$public_real = realpath( $public_root );
+				if ( ! $public_real ) {
+					continue;
+				}
+				if ( 0 === strpos( trailingslashit( $real ), trailingslashit( wp_normalize_path( $public_real ) ) ) ) {
+					return '';
+				}
+			}
+			return $real;
+		}
+
+		/**
+		 * Whether a private directory was configured but rejected by
+		 * external_receipt_dir() — receipts are then silently going to the
+		 * fallback directory, which the site owner should be told about.
+		 *
+		 * @return bool
+		 */
+		public static function receipt_dir_misconfigured() {
+			return '' !== self::configured_receipt_dir() && '' === self::external_receipt_dir();
+		}
+
+		/**
+		 * Where new receipts are written: the private directory when one is
+		 * configured and valid, otherwise the protected fallback in uploads.
+		 *
+		 * @return string Absolute path, no trailing slash.
+		 */
+		public static function receipt_storage_dir() {
+			$external = self::external_receipt_dir();
+			return '' !== $external ? $external : self::fallback_receipt_dir();
+		}
+
+		/**
+		 * Whether a string is a well-formed receipt key (UUID + allowed
+		 * extension). The key is the only thing stored on a withdrawal row
+		 * and is turned into a path here, so it is validated strictly before
+		 * ever touching the filesystem.
+		 *
+		 * @param mixed $key Candidate key.
+		 * @return bool
+		 */
+		public static function is_valid_receipt_key( $key ) {
+			return is_string( $key ) && 1 === preg_match( '/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.(pdf|png|jpg|jpeg)$/', $key );
+		}
+
+		/**
+		 * Resolve a receipt key to the file on disk. Looks in the current
+		 * storage directory first, then the fallback one, so receipts stored
+		 * before a private directory was configured (or after it was
+		 * removed) keep resolving.
+		 *
+		 * @param string $key Receipt key.
+		 * @return string Absolute path, or empty when the key is invalid or the file is gone.
+		 */
+		public static function receipt_path( $key ) {
+			if ( ! self::is_valid_receipt_key( $key ) ) {
+				return '';
+			}
+			$upload_dir = wp_upload_dir();
+			$candidates = array_filter(
+				array(
+					self::external_receipt_dir(),
+					trailingslashit( $upload_dir['basedir'] ) . 'woo-wallet-receipts',
+				)
+			);
+			foreach ( $candidates as $dir ) {
+				$path = trailingslashit( $dir ) . $key;
+				if ( is_file( $path ) ) {
+					return $path;
+				}
+			}
+			return '';
+		}
+
+		/**
+		 * Whether a withdrawal row has a receipt attached — a receipt_key,
+		 * or a legacy Media Library receipt_id that could not be migrated.
+		 *
+		 * @param object $row Withdrawal row.
+		 * @return bool
+		 */
+		public static function has_receipt( $row ) {
+			return ! empty( $row->receipt_key ) || ! empty( $row->receipt_id );
+		}
+
+		/**
+		 * Resolve a withdrawal row's receipt to a readable file.
+		 *
+		 * @param object $row Withdrawal row.
+		 * @return array|null {path:string, mime:string, filename:string} or null when there is no readable file.
+		 */
+		public static function resolve_receipt_file( $row ) {
+			if ( ! empty( $row->receipt_key ) ) {
+				$path = self::receipt_path( $row->receipt_key );
+				if ( '' === $path ) {
+					return null;
+				}
+				$type = wp_check_filetype( $row->receipt_key, self::RECEIPT_MIMES );
+				return array(
+					'path'     => $path,
+					'mime'     => $type['type'] ? $type['type'] : 'application/octet-stream',
+					'filename' => sprintf( 'receipt-%d.%s', (int) $row->id, pathinfo( $row->receipt_key, PATHINFO_EXTENSION ) ),
+				);
+			}
+			if ( ! empty( $row->receipt_id ) ) {
+				$path = get_attached_file( (int) $row->receipt_id );
+				if ( ! $path || ! file_exists( $path ) ) {
+					return null;
+				}
+				$mime = get_post_mime_type( (int) $row->receipt_id );
+				return array(
+					'path'     => $path,
+					'mime'     => $mime ? $mime : 'application/octet-stream',
+					'filename' => basename( $path ),
+				);
+			}
+			return null;
+		}
+
+		/**
+		 * Whether an attachment is a temporary upload this plugin created
+		 * for a receipt (handle_receipt_upload() or the admin REST upload
+		 * route). Only such attachments may be attached to a withdrawal,
+		 * because attaching deletes the attachment — an arbitrary Media
+		 * Library item may be in use elsewhere on the site.
+		 *
+		 * @param int $attachment_id Attachment id.
+		 * @return bool
+		 */
+		public static function is_wallet_receipt_upload( $attachment_id ) {
 			$attachment_id = (int) $attachment_id;
-			if ( ! $attachment_id || 'attachment' !== get_post_type( $attachment_id ) ) {
-				return;
+			return $attachment_id
+				&& 'attachment' === get_post_type( $attachment_id )
+				&& metadata_exists( 'post', $attachment_id, self::RECEIPT_UPLOAD_META );
+		}
+
+		/**
+		 * Copy an attachment's file into receipt storage under a fresh
+		 * random key and verify the copy byte-for-byte.
+		 *
+		 * A COPY, never a move, and the attachment's own meta is never
+		 * touched: the caller deletes the attachment afterwards, and
+		 * wp_delete_attachment() deletes whatever file the attachment points
+		 * at — which must still be the original public copy, not this one.
+		 *
+		 * @param int $attachment_id Attachment id.
+		 * @return string|WP_Error The receipt key, or why nothing was stored.
+		 */
+		private static function copy_attachment_to_storage( $attachment_id ) {
+			$source = get_attached_file( (int) $attachment_id );
+			if ( ! $source || ! is_file( $source ) ) {
+				return new WP_Error( 'woo_wallet_receipt_missing', __( 'The uploaded receipt file could not be found.', 'woo-wallet' ) );
+			}
+			$extension = strtolower( (string) pathinfo( $source, PATHINFO_EXTENSION ) );
+			if ( ! isset( self::RECEIPT_MIMES[ $extension ] ) ) {
+				return new WP_Error( 'woo_wallet_receipt_type', __( 'The receipt must be a PDF, PNG or JPG.', 'woo-wallet' ) );
 			}
 
-			$current_path = get_attached_file( $attachment_id );
-			if ( ! $current_path || ! file_exists( $current_path ) ) {
-				return;
+			$key    = wp_generate_uuid4() . '.' . $extension;
+			$target = trailingslashit( self::receipt_storage_dir() ) . $key;
+
+			$copied = @copy( $source, $target ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			clearstatcache( true, $target );
+			$verified = $copied
+				&& is_file( $target )
+				&& filesize( $target ) === filesize( $source )
+				&& hash_equals( (string) hash_file( 'sha256', $source ), (string) hash_file( 'sha256', $target ) );
+
+			if ( ! $verified ) {
+				if ( file_exists( $target ) ) {
+					@unlink( $target ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.unlink_unlink
+				}
+				return new WP_Error( 'woo_wallet_receipt_copy_failed', __( 'The receipt could not be copied into secure storage.', 'woo-wallet' ) );
 			}
+			return $key;
+		}
 
-			$protected_dir = self::receipt_storage_dir();
-			if ( 0 === strpos( wp_normalize_path( $current_path ), trailingslashit( wp_normalize_path( $protected_dir ) ) ) ) {
-				return; // Already protected.
+		/**
+		 * Step one of attaching a receipt: copy a wallet-owned upload into
+		 * receipt storage and return its key. Nothing is deleted here — the
+		 * caller saves the key on the withdrawal row and only then calls
+		 * delete_receipt_upload(); if saving fails it calls
+		 * discard_staged_receipt() instead and the upload is left alone.
+		 *
+		 * @param int $attachment_id A wallet-owned temporary upload.
+		 * @return string|WP_Error The receipt key, or why nothing was staged.
+		 */
+		public static function stage_receipt( $attachment_id ) {
+			if ( ! self::is_wallet_receipt_upload( $attachment_id ) ) {
+				return new WP_Error( 'woo_wallet_receipt_not_owned', __( 'This file was not uploaded as a withdrawal receipt.', 'woo-wallet' ) );
 			}
+			return self::copy_attachment_to_storage( $attachment_id );
+		}
 
-			// A random, unguessable filename rather than the original
-			// basename: the `.htaccess` deny in receipt_storage_dir() only
-			// takes effect on Apache with AllowOverride permitting it — on
-			// any other server (Nginx, or Apache with overrides disabled)
-			// this filename is the only thing standing between a request and
-			// the file. A recognisable original name is trivial to guess or
-			// enumerate; wp_generate_password()'s 40 characters are not.
-			$extension   = pathinfo( $current_path, PATHINFO_EXTENSION );
-			$random_name = wp_generate_password( 40, false, false ) . ( $extension ? '.' . $extension : '' );
-			$new_path    = trailingslashit( $protected_dir ) . wp_unique_filename( $protected_dir, $random_name );
-
-			if ( ! @rename( $current_path, $new_path ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.rename_rename
-				return;
+		/**
+		 * Remove a staged copy whose key never made it onto a withdrawal row.
+		 *
+		 * @param string $key Receipt key.
+		 */
+		public static function discard_staged_receipt( $key ) {
+			$path = self::receipt_path( $key );
+			if ( '' !== $path ) {
+				@unlink( $path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.unlink_unlink
 			}
+		}
 
-			update_attached_file( $attachment_id, $new_path );
+		/**
+		 * Final step of attaching a receipt: delete the temporary upload —
+		 * its public file, thumbnails and Media Library / wp/v2/media record.
+		 * Refuses anything that is not a wallet-owned upload.
+		 *
+		 * @param int $attachment_id Attachment id.
+		 */
+		public static function delete_receipt_upload( $attachment_id ) {
+			if ( self::is_wallet_receipt_upload( $attachment_id ) ) {
+				wp_delete_attachment( (int) $attachment_id, true );
+			}
+		}
 
-			$metadata = wp_get_attachment_metadata( $attachment_id );
-			if ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
-				$old_dir = trailingslashit( dirname( $current_path ) );
-				foreach ( $metadata['sizes'] as $size ) {
-					if ( empty( $size['file'] ) ) {
-						continue;
-					}
-					$size_path = $old_dir . $size['file'];
-					if ( file_exists( $size_path ) ) {
-						@unlink( $size_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged, WordPress.WP.AlternativeFunctions.unlink_unlink
+		/**
+		 * Delete the Media Library attachment behind a legacy receipt_id
+		 * once no withdrawal row references it any more. Legacy receipts
+		 * were not marked as wallet-owned, so an attachment that is visibly
+		 * in use elsewhere (attached to a post, or a featured image) is kept.
+		 *
+		 * @param int $attachment_id Attachment id.
+		 * @return bool Whether the attachment is gone.
+		 */
+		private static function delete_legacy_receipt_attachment( $attachment_id ) {
+			global $wpdb;
+			$attachment_id = (int) $attachment_id;
+			$post          = $attachment_id ? get_post( $attachment_id ) : null;
+			if ( ! $post || 'attachment' !== $post->post_type ) {
+				return true;
+			}
+			$still_referenced = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . self::table() . ' WHERE receipt_id = %d', $attachment_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+			if ( $still_referenced ) {
+				return false;
+			}
+			if ( ! self::is_wallet_receipt_upload( $attachment_id ) ) {
+				$is_thumbnail = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_thumbnail_id' AND meta_value = %s", (string) $attachment_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				if ( $post->post_parent || $is_thumbnail ) {
+					return false;
+				}
+			}
+			return (bool) wp_delete_attachment( $attachment_id, true );
+		}
+
+		/**
+		 * Remove whatever receipt a row held before a new one replaced it.
+		 *
+		 * @param object $previous The row as it was before the update.
+		 */
+		private static function release_previous_receipt( $previous ) {
+			if ( ! empty( $previous->receipt_key ) ) {
+				self::discard_staged_receipt( $previous->receipt_key );
+			}
+			if ( ! empty( $previous->receipt_id ) ) {
+				self::delete_legacy_receipt_attachment( (int) $previous->receipt_id );
+			}
+		}
+
+		/**
+		 * Move every receipt still held as a Media Library attachment
+		 * (receipt_id) into receipt storage: copy and verify, save the key,
+		 * and only after both succeed delete the attachment. A row whose
+		 * copy or save fails is left exactly as it was and retried on the
+		 * next daily run.
+		 *
+		 * @return int Number of rows migrated.
+		 */
+		public static function migrate_legacy_receipts() {
+			global $wpdb;
+			$rows     = $wpdb->get_results( 'SELECT id, receipt_id FROM ' . self::table() . " WHERE receipt_id > 0 AND receipt_key = ''" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+			$migrated = 0;
+			foreach ( (array) $rows as $row ) {
+				$attachment_id = (int) $row->receipt_id;
+				$key           = self::copy_attachment_to_storage( $attachment_id );
+				if ( is_wp_error( $key ) ) {
+					continue;
+				}
+				$saved = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+					self::table(),
+					array(
+						'receipt_key' => $key,
+						'receipt_id'  => 0,
+					),
+					array(
+						'id'         => $row->id,
+						'receipt_id' => $attachment_id,
+					),
+					array( '%s', '%d' ),
+					array( '%d', '%d' )
+				);
+				if ( ! $saved ) {
+					self::discard_staged_receipt( $key );
+					continue;
+				}
+				++$migrated;
+				if ( ! self::delete_legacy_receipt_attachment( $attachment_id ) && get_post( $attachment_id ) ) {
+					$other_rows = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . self::table() . ' WHERE receipt_id = %d', $attachment_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+					if ( ! $other_rows ) {
+						self::add_note(
+							$row->id,
+							sprintf(
+								/* translators: %d: Media Library attachment id */
+								__( 'The receipt was moved to secure storage, but its original Media Library file (#%d) was kept because it appears to be in use elsewhere on the site. Delete it from the Media Library if it is not needed.', 'woo-wallet' ),
+								$attachment_id
+							),
+							'private',
+							0
+						);
 					}
 				}
-				unset( $metadata['sizes'] );
-				wp_update_attachment_metadata( $attachment_id, $metadata );
+			}
+			return $migrated;
+		}
+
+		/**
+		 * Delete wallet-owned temporary uploads that never got attached to a
+		 * withdrawal (an abandoned REST upload, or a failed attach) once
+		 * they are more than a day old.
+		 */
+		public static function cleanup_orphaned_receipt_uploads() {
+			global $wpdb;
+			$orphans = get_posts(
+				array(
+					'post_type'      => 'attachment',
+					'post_status'    => 'any',
+					'fields'         => 'ids',
+					'posts_per_page' => 100,
+					'meta_key'       => self::RECEIPT_UPLOAD_META, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+					'date_query'     => array( array( 'before' => '1 day ago' ) ),
+				)
+			);
+			foreach ( $orphans as $attachment_id ) {
+				$referenced = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . self::table() . ' WHERE receipt_id = %d', $attachment_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+				if ( ! $referenced ) {
+					wp_delete_attachment( (int) $attachment_id, true );
+				}
 			}
 		}
 
@@ -1462,7 +1784,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * The WP-Cron handler: actually verify receipt_storage_dir() and
+		 * The WP-Cron handler: actually verify fallback_receipt_dir() and
 		 * cache the result. Never call this synchronously from a page
 		 * load — it makes a real outbound HTTP request.
 		 */
@@ -1478,7 +1800,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Whether receipt_storage_dir() has been confirmed unreachable from
+		 * Whether fallback_receipt_dir() has been confirmed unreachable from
 		 * the web. Never makes an HTTP request itself — reads whatever
 		 * check_receipt_protection() last found, which may be:
 		 *  - 'protected': a real request for a canary file placed in the
@@ -1507,15 +1829,20 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		/**
 		 * Actually perform the check described in
 		 * receipt_storage_protection_status()'s docblock: write a canary file
-		 * with random, unpredictable content into receipt_storage_dir(),
+		 * with random, unpredictable content into fallback_receipt_dir(),
 		 * request its public URL over real HTTP, and confirm the response
 		 * does not echo that content back.
 		 *
 		 * @return string One of 'protected', 'leaking', 'unknown'.
 		 */
 		private static function verify_receipt_storage_protection() {
-			$dir        = self::receipt_storage_dir();
 			$upload_dir = wp_upload_dir();
+			if ( '' !== self::external_receipt_dir() && ! glob( trailingslashit( $upload_dir['basedir'] ) . 'woo-wallet-receipts/*-*-*-*-*.*' ) ) {
+				// Every receipt lives in the private directory outside the
+				// web root — there is nothing in uploads to leak.
+				return 'protected';
+			}
+			$dir = self::fallback_receipt_dir();
 
 			$canary_name    = 'canary-' . wp_generate_password( 12, false, false ) . '.txt';
 			$canary_content = wp_generate_password( 32, false, false );
@@ -1559,7 +1886,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * NOT shown for the 'unknown' status (an inconclusive check is not
 		 * the same finding as a confirmed leak, and warning every admin on
 		 * every host that merely blocks self-requests would train them to
-		 * ignore this notice). Random filenames (see protect_receipt_file())
+		 * ignore this notice). Random filenames (see copy_attachment_to_storage())
 		 * still apply regardless of this check's outcome — this notice is
 		 * about the .htaccess layer specifically, not the only thing
 		 * standing between a request and a receipt.
@@ -1569,12 +1896,18 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			if ( ! $screen || woo_wallet_get_screen_id( 'woo-wallet-withdrawals' ) !== $screen->id ) {
 				return;
 			}
+			if ( self::receipt_dir_misconfigured() ) {
+				printf(
+					'<div class="notice notice-warning"><p>%s</p></div>',
+					esc_html__( 'WOO_WALLET_RECEIPTS_DIR is set, but that directory is not being used for withdrawal receipts: it must already exist, be writable by the web server, and be located outside the WordPress, wp-content and uploads directories. Receipts are being stored in wp-content/uploads/woo-wallet-receipts/ instead.', 'woo-wallet' )
+				);
+			}
 			if ( 'leaking' !== self::receipt_storage_protection_status() ) {
 				return;
 			}
 			printf(
 				'<div class="notice notice-error"><p>%s</p></div>',
-				esc_html__( 'Wallet withdrawal receipts are stored in a directory this server does not restrict access to (wp-content/uploads/woo-wallet-receipts/). Anyone who obtains a receipt\'s exact file address could download it directly, bypassing the usual permission checks. Ask your host to add a server-level rule blocking direct access to that directory (an .htaccess "deny from all" already exists there, but this server either does not read it or is configured to ignore it).', 'woo-wallet' )
+				esc_html__( 'Wallet withdrawal receipts are stored in a directory this server does not restrict access to (wp-content/uploads/woo-wallet-receipts/). Anyone who obtains a receipt\'s exact file address could download it directly, bypassing the usual permission checks. Ask your host to add a server-level rule blocking direct access to that directory (an .htaccess "deny from all" already exists there, but this server either does not read it or is configured to ignore it), or define WOO_WALLET_RECEIPTS_DIR in wp-config.php pointing at a writable directory outside the web root.', 'woo-wallet' )
 			);
 		}
 
@@ -1601,12 +1934,12 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Remove receipts older than receipt_retention_days() — both the Media
-		 * Library attachment and the row's reference to it, so the customer's
+		 * Remove receipts older than receipt_retention_days() — both the
+		 * stored file and the row's reference to it, so the customer's
 		 * and admin's UI stop showing a link to a file that's been deleted, and
 		 * uploaded proof-of-payment doesn't sit in the server's storage forever.
 		 * Leaves a private note on each affected request so an admin reviewing
-		 * it later understands why `receipt_id` is empty rather than assuming
+		 * it later understands why the receipt is gone rather than assuming
 		 * one was never attached.
 		 *
 		 * The request row itself (amount, bank details, status, reference
@@ -1614,6 +1947,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * column pointing at it.
 		 */
 		public function cleanup_old_receipts() {
+			self::migrate_legacy_receipts();
+			self::cleanup_orphaned_receipt_uploads();
+
 			$retention_days = self::receipt_retention_days();
 			if ( $retention_days <= 0 ) {
 				return;
@@ -1628,14 +1964,28 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 
 			$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 				$wpdb->prepare(
-					'SELECT id, receipt_id FROM ' . self::table() . ' WHERE receipt_id > 0 AND date_created < %s', // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					'SELECT id, receipt_id, receipt_key FROM ' . self::table() . " WHERE ( receipt_key <> '' OR receipt_id > 0 ) AND date_created < %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
 					$cutoff
 				)
 			);
 
 			foreach ( $rows as $row ) {
-				wp_delete_attachment( (int) $row->receipt_id, true );
-				$wpdb->update( self::table(), array( 'receipt_id' => 0 ), array( 'id' => $row->id ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+				if ( $row->receipt_key ) {
+					self::discard_staged_receipt( $row->receipt_key );
+				}
+				if ( (int) $row->receipt_id ) {
+					wp_delete_attachment( (int) $row->receipt_id, true );
+				}
+				$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+					self::table(),
+					array(
+						'receipt_id'  => 0,
+						'receipt_key' => '',
+					),
+					array( 'id' => $row->id ),
+					array( '%d', '%s' ),
+					array( '%d' )
+				);
 				self::add_note(
 					$row->id,
 					sprintf(
@@ -1865,7 +2215,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					<tr>
 						<th><?php esc_html_e( 'Receipt', 'woo-wallet' ); ?></th>
 						<td>
-							<?php if ( $request->receipt_id && get_attached_file( $request->receipt_id ) ) : ?>
+							<?php if ( self::resolve_receipt_file( $request ) ) : ?>
 								<a href="<?php echo esc_url( self::receipt_view_url( $request->id ) ); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e( 'View receipt', 'woo-wallet' ); ?></a>
 								<?php $ww_retention_days = self::receipt_retention_days(); ?>
 								<?php if ( $ww_retention_days > 0 ) : ?>
@@ -2058,7 +2408,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			// Validate/upload the receipt (if one was submitted) before reserving
 			// any funds, so a failed upload never leaves a debit sitting against
 			// the customer's wallet with nothing to show for it.
-			$receipt = self::maybe_handle_receipt_upload( 'receipt' );
+			$receipt = self::handle_receipt_upload( 'receipt' );
 			if ( $receipt['error'] ) {
 				$notice = array(
 					'type'    => 'error',
@@ -2130,7 +2480,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @param int    $admin_id         Staff member creating the request.
 		 * @param string $status           'pending' or 'paid'.
 		 * @param string $reference_no     Optional bank transfer reference number.
-		 * @param int    $receipt_id       Optional, an already-uploaded attachment id.
+		 * @param int    $receipt_id       Optional, a wallet-owned temporary upload (see handle_receipt_upload()).
 		 * @param string $note             Optional note.
 		 * @param string $note_visibility  'public' or 'private'.
 		 * @return array {is_valid, message, id?}
@@ -2170,15 +2520,37 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
+			// Copy the receipt into secure storage before reserving any funds,
+			// so a failed copy never leaves a debit with nothing to show for it.
+			$receipt_key = '';
+			if ( $receipt_id ) {
+				$receipt_key = self::stage_receipt( $receipt_id );
+				if ( is_wp_error( $receipt_key ) ) {
+					return array(
+						'is_valid' => false,
+						/* translators: %s: reason the receipt could not be stored */
+						'message'  => sprintf( __( 'The receipt could not be stored securely, so the withdrawal was not created: %s', 'woo-wallet' ), $receipt_key->get_error_message() ),
+					);
+				}
+			}
+
 			$result = self::reserve_and_insert( $target_user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, (string) $iban, (int) $admin_id, $status, (string) $reference_no );
 			if ( ! $result['is_valid'] ) {
+				self::discard_staged_receipt( $receipt_key );
 				return $result;
 			}
 
-			if ( $receipt_id ) {
+			if ( $receipt_key ) {
 				global $wpdb;
-				$wpdb->update( self::table(), array( 'receipt_id' => (int) $receipt_id ), array( 'id' => $result['id'] ), array( '%d' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-				self::protect_receipt_file( $receipt_id );
+				$saved = $wpdb->update( self::table(), array( 'receipt_key' => $receipt_key ), array( 'id' => $result['id'] ), array( '%s' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+				if ( $saved ) {
+					// Only now — the key is on the row — is it safe to delete
+					// the temporary public upload.
+					self::delete_receipt_upload( $receipt_id );
+				} else {
+					self::discard_staged_receipt( $receipt_key );
+					self::add_note( $result['id'], __( 'The receipt could not be attached to this request. Please upload it again.', 'woo-wallet' ), 'private', $admin_id );
+				}
 			}
 			if ( $note ) {
 				self::add_note( $result['id'], $note, $note_visibility, $admin_id );
@@ -2244,7 +2616,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 
 			// Validate/upload the receipt (if one was submitted) before touching
 			// any state, so a failed upload never leaves the request half-processed.
-			$receipt = self::maybe_handle_receipt_upload( 'receipt' );
+			$receipt = self::handle_receipt_upload( 'receipt' );
 			if ( $receipt['error'] ) {
 				$notice = array(
 					'type'    => 'error',
@@ -2293,7 +2665,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @param string $action          'paid' or 'reject'.
 		 * @param int    $admin_id        Staff member processing the request.
 		 * @param string $reference_no    Optional bank transfer reference number.
-		 * @param int    $receipt_id      Optional, an already-uploaded attachment id.
+		 * @param int    $receipt_id      Optional, a wallet-owned temporary upload (see handle_receipt_upload()).
 		 * @param string $note            Optional note.
 		 * @param string $note_visibility 'public' or 'private'.
 		 * @return array {is_valid, message, receipt_orphaned?} `receipt_orphaned` is
@@ -2325,6 +2697,21 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
+			// Copy the receipt into secure storage before changing anything; the
+			// temporary upload is only deleted once its key is on the row.
+			$receipt_key = '';
+			if ( $receipt_id ) {
+				$receipt_key = self::stage_receipt( $receipt_id );
+				if ( is_wp_error( $receipt_key ) ) {
+					return array(
+						'is_valid'         => false,
+						/* translators: %s: reason the receipt could not be stored */
+						'message'          => sprintf( __( 'The receipt could not be stored securely, so the request was not changed: %s', 'woo-wallet' ), $receipt_key->get_error_message() ),
+						'receipt_orphaned' => true,
+					);
+				}
+			}
+
 			global $wpdb;
 
 			if ( 'paid' === $action ) {
@@ -2340,8 +2727,10 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					$update['reference_no'] = $reference_no;
 					$formats[]              = '%s';
 				}
-				if ( $receipt_id ) {
-					$update['receipt_id'] = $receipt_id;
+				if ( $receipt_key ) {
+					$update['receipt_key'] = $receipt_key;
+					$update['receipt_id']  = 0;
+					$formats[]             = '%s';
 					$formats[]             = '%d';
 				}
 
@@ -2360,14 +2749,16 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 
 				if ( ! $affected ) {
+					self::discard_staged_receipt( $receipt_key );
 					return array(
 						'is_valid'         => false,
 						'message'          => __( 'This request was just processed by someone else — no changes were made.', 'woo-wallet' ),
 						'receipt_orphaned' => (bool) $receipt_id,
 					);
 				}
-				if ( $receipt_id ) {
-					self::protect_receipt_file( $receipt_id );
+				if ( $receipt_key ) {
+					self::delete_receipt_upload( $receipt_id );
+					self::release_previous_receipt( $request );
 				}
 				if ( $note ) {
 					self::add_note( $request->id, $note, $note_visibility, $admin_id );
@@ -2398,8 +2789,10 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				$claim['reference_no'] = $reference_no;
 				$claim_formats[]       = '%s';
 			}
-			if ( $receipt_id ) {
-				$claim['receipt_id'] = $receipt_id;
+			if ( $receipt_key ) {
+				$claim['receipt_key'] = $receipt_key;
+				$claim['receipt_id']  = 0;
+				$claim_formats[]      = '%s';
 				$claim_formats[]      = '%d';
 			}
 			$claimed = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
@@ -2414,14 +2807,16 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			);
 
 			if ( ! $claimed ) {
+				self::discard_staged_receipt( $receipt_key );
 				return array(
 					'is_valid'         => false,
 					'message'          => __( 'This request was just processed by someone else — no changes were made.', 'woo-wallet' ),
 					'receipt_orphaned' => (bool) $receipt_id,
 				);
 			}
-			if ( $receipt_id ) {
-				self::protect_receipt_file( $receipt_id );
+			if ( $receipt_key ) {
+				self::delete_receipt_upload( $receipt_id );
+				self::release_previous_receipt( $request );
 			}
 
 			// idempotent_refund() checks the wallet ledger itself before

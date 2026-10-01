@@ -416,11 +416,8 @@ class Woo_Wallet_Withdrawal_Report extends WP_List_Table {
 		switch ( $column_name ) {
 			case 'id':
 				$out = '<a href="' . esc_url( $this->detail_url( $item->id ) ) . '"><strong>#' . (int) $item->id . '</strong></a>';
-				// Never wp_get_attachment_url() — a receipt is relocated out of
-				// the public uploads tree the moment it's attached (see
-				// Woo_Wallet_Withdrawal::protect_receipt_file()), specifically
-				// so that URL stops resolving.
-				if ( ! empty( $item->receipt_id ) && get_attached_file( $item->receipt_id ) ) {
+				// Always the protected endpoint, never a direct file URL.
+				if ( Woo_Wallet_Withdrawal::resolve_receipt_file( $item ) ) {
 					$out .= ' <a href="' . esc_url( Woo_Wallet_Withdrawal::receipt_view_url( $item->id ) ) . '" target="_blank" rel="noopener noreferrer" title="' . esc_attr__( 'Receipt attached — click to view', 'woo-wallet' ) . '"><span class="dashicons dashicons-paperclip" style="font-size:16px;width:16px;height:16px;vertical-align:middle;color:#2271b1;"></span></a>';
 				}
 				return $out;

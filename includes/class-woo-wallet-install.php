@@ -70,8 +70,8 @@ class Woo_Wallet_Install {
 		'1.7.12' => array(
 			'woo_wallet_update_1712_db_schema',
 		),
-		'1.8.2'  => array(
-			'woo_wallet_update_182_protect_existing_receipts',
+		'1.8.3'  => array(
+			'woo_wallet_update_183_receipts_out_of_media_library',
 		),
 	);
 	/**
@@ -254,6 +254,7 @@ class Woo_Wallet_Install {
             phone varchar(32 ) NOT NULL DEFAULT '',
             reference_no varchar(191 ) NOT NULL DEFAULT '',
             receipt_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            receipt_key varchar(64 ) NOT NULL DEFAULT '',
             refund_transaction_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
             status varchar(20 ) NOT NULL DEFAULT 'pending',
             admin_note text NULL,

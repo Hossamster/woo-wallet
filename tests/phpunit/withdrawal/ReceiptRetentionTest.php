@@ -6,7 +6,7 @@
  * is older than the retention window. This is the feature the user
  * explicitly confirmed they want enforced, not just described in the UI.
  *
- * maybe_handle_receipt_upload()'s successful-upload path is not covered
+ * handle_receipt_upload()'s successful-upload path is not covered
  * here: it delegates to core's wp_handle_upload(), which gates on the real
  * is_uploaded_file() check — true only for an actual HTTP file upload, which
  * a PHPUnit CLI run cannot produce. Its "no file submitted" branch (no
@@ -232,14 +232,13 @@ class Receipt_Retention_Test extends WP_UnitTestCase {
 		$this->assertGreaterThan( 0, (int) Woo_Wallet_Withdrawal::get_request( $id3 )->receipt_id );
 	}
 
-	// -- maybe_handle_receipt_upload(): only the no-file branch is testable
+	// -- handle_receipt_upload(): only the no-file branch is testable
 	// without a real HTTP upload (see class docblock). ---------------------
 
-	public function test_maybe_handle_receipt_upload_returns_zero_when_no_file_submitted() {
-		$reflection = new ReflectionMethod( 'Woo_Wallet_Withdrawal', 'maybe_handle_receipt_upload' );
+	public function test_handle_receipt_upload_returns_zero_when_no_file_submitted() {
 		unset( $_FILES['receipt'] );
 
-		$result = $reflection->invoke( null, 'receipt' );
+		$result = Woo_Wallet_Withdrawal::handle_receipt_upload( 'receipt' );
 
 		$this->assertSame( 0, $result['id'] );
 		$this->assertSame( '', $result['error'] );

@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.8.2
+Stable tag: 1.8.3
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,13 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.8.3 =
+* Security - Withdrawal receipts no longer stay in the Media Library at all. When a receipt is attached to a withdrawal it is copied into receipt storage under a random key, the copy is verified byte-for-byte, only that key is saved on the request, and only then is the temporary upload deleted — so neither its original uploads URL nor its `wp/v2/media/<id>` record exists afterwards. The only way to read a receipt is the ownership-checked `terawallet/v1/me/withdrawals/{id}/receipt` endpoint. If the copy or the save fails, nothing is deleted and the request is left unchanged.
+* Security - Optional private storage: define `WOO_WALLET_RECEIPTS_DIR` in `wp-config.php` pointing at an existing, writable directory outside the WordPress, `wp-content` and uploads directories and receipts are stored there, outside the web root. Without it (or if the directory is not valid — a warning is shown on the Withdrawals screen) receipts keep going to the `.htaccess`-denied `uploads/woo-wallet-receipts/` directory under random names, with the existing daily canary check.
+* Security - The customer-facing withdrawal history still linked a receipt's raw attachment URL; it now links the protected endpoint like every other screen.
+* Change - Admin REST API: a receipt must now be uploaded through the new `POST terawallet/v1/admin/withdrawals/receipts` route (multipart field `file`), which returns the `receipt_id` to pass to create/process. An id from `POST /wp/v2/media` is refused, because attaching deletes the upload and an ordinary Media Library item may be in use elsewhere. The admin withdrawal object gains `has_receipt`; `receipt_id` is now `null` for attached receipts.
+* Upgrade - Receipts attached before this update are moved the same way (copy, verify, save key, then delete the attachment). One that cannot be copied is left exactly as it was and retried daily; an attachment that is attached to a post or used as a featured image is kept and noted on the request instead of being deleted.
 
 = v1.8.2 =
 * Security - Closed the remaining gaps in last version's receipt-privacy fix: the admin Withdrawals list's own "receipt attached" badge still linked the raw public attachment URL (missed in v1.8.1 — only the detail screen and the admin REST API were updated); protected receipts now get a random, unguessable filename rather than keeping their original name, since the `.htaccess` deny only takes effect on Apache with overrides permitted — on any other server configuration (Nginx, or Apache without AllowOverride), the filename was the only real protection left; and a daily check now verifies the storage directory is actually unreachable from the web (by requesting a real canary file placed there) rather than assuming an `.htaccess` file is enough on its own — a confirmed leak now shows a clear warning on the Withdrawals screen with instructions to add server-level protection.

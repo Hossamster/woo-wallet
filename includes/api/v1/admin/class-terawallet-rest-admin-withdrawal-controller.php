@@ -10,6 +10,7 @@
  *   - POST /admin/withdrawals/{id}/process mark paid | reject
  *   - POST /admin/withdrawals/{id}/recover resolve a request stuck 'processing'
  *   - POST /admin/withdrawals/{id}/notes   add a note (public or private)
+ *   - POST /admin/withdrawals/receipts     upload a receipt file, returns a receipt_id
  *
  * Every money-moving route (create, process, recover) delegates to the exact
  * same `Woo_Wallet_Withdrawal::admin_*()` methods the classic admin-post
@@ -17,9 +18,12 @@
  * concurrency-safe / idempotent-refund logic regardless of which surface
  * calls it — see class-woo-wallet-withdrawal.php for that logic itself.
  *
- * A receipt is attached by `receipt_id`: upload the file to `wp/v2/media`
- * first (standard WordPress media endpoint), then pass the resulting id
- * here. This controller does not accept a raw file upload itself.
+ * A receipt is attached by `receipt_id`: upload the file to
+ * `POST /admin/withdrawals/receipts` (multipart, field `file`) first, then
+ * pass the returned id to create/process. Only ids from that route are
+ * accepted — attaching a receipt copies it into private storage and deletes
+ * the temporary upload, so an arbitrary `wp/v2/media` item (which may be in
+ * use elsewhere on the site) is refused.
  *
  * @package StandaleneTech
  * @since   1.7.4
@@ -42,14 +46,6 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 		protected $rest_base = 'admin/withdrawals';
 
 		/**
-		 * Allowed receipt mime types — matches the admin UI's own restriction
-		 * regardless of what `wp/v2/media` itself would otherwise accept.
-		 *
-		 * @var string[]
-		 */
-		const ALLOWED_RECEIPT_MIMES = array( 'application/pdf', 'image/png', 'image/jpeg' );
-
-		/**
 		 * Register routes.
 		 */
 		public function register_routes() {
@@ -68,6 +64,18 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 						'callback'            => array( $this, 'create_item' ),
 						'permission_callback' => array( $this, 'permissions_write' ),
 						'args'                => $this->get_create_args(),
+					),
+				)
+			);
+
+			register_rest_route(
+				$this->namespace,
+				'/' . $this->rest_base . '/receipts',
+				array(
+					array(
+						'methods'             => WP_REST_Server::CREATABLE,
+						'callback'            => array( $this, 'upload_receipt' ),
+						'permission_callback' => array( $this, 'permissions_write' ),
 					),
 				)
 			);
@@ -209,9 +217,10 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 		/* ---------------- helpers ---------------- */
 
 		/**
-		 * Validate a `receipt_id` param: must be an existing attachment with
-		 * an allowed mime type. Returns 0 (no receipt supplied — fine, it is
-		 * optional everywhere) or the validated id, or a WP_Error.
+		 * Validate a `receipt_id` param: must be a temporary upload created
+		 * by upload_receipt() (or the admin form) with an allowed mime type.
+		 * Returns 0 (no receipt supplied — fine, it is optional everywhere)
+		 * or the validated id, or a WP_Error.
 		 *
 		 * @param WP_REST_Request $request Request.
 		 * @return int|WP_Error
@@ -224,14 +233,39 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 			if ( 'attachment' !== get_post_type( $receipt_id ) ) {
 				return $this->error( 'terawallet_rest_invalid_receipt', __( 'receipt_id is not a valid media attachment.', 'woo-wallet' ), 400 );
 			}
+			if ( ! Woo_Wallet_Withdrawal::is_wallet_receipt_upload( $receipt_id ) ) {
+				return $this->error( 'terawallet_rest_receipt_not_wallet_upload', __( 'receipt_id must come from POST /admin/withdrawals/receipts. Existing Media Library items cannot be used as receipts.', 'woo-wallet' ), 400 );
+			}
 			$mime = get_post_mime_type( $receipt_id );
-			if ( ! in_array( $mime, self::ALLOWED_RECEIPT_MIMES, true ) ) {
+			if ( ! in_array( $mime, Woo_Wallet_Withdrawal::RECEIPT_MIMES, true ) ) {
 				return $this->error( 'terawallet_rest_invalid_receipt_type', __( 'The receipt must be a PDF, PNG or JPG.', 'woo-wallet' ), 400 );
 			}
 			return $receipt_id;
 		}
 
 		/* ---------------- handlers ---------------- */
+
+		/**
+		 * Upload a receipt file (multipart field `file`) as a temporary,
+		 * wallet-owned upload. Runs the same WordPress upload validation as
+		 * the admin form. The returned receipt_id is then passed to
+		 * create/process; an upload never attached is removed after a day.
+		 *
+		 * @param WP_REST_Request $request Request.
+		 * @return WP_REST_Response|WP_Error
+		 */
+		public function upload_receipt( $request ) {
+			$files = $request->get_file_params();
+			if ( empty( $files['file'] ) || empty( $files['file']['name'] ) ) {
+				return $this->error( 'terawallet_rest_receipt_missing_file', __( 'No receipt file was uploaded (expected a multipart field named "file").', 'woo-wallet' ), 400 );
+			}
+			$_FILES['file'] = $files['file'];
+			$upload         = Woo_Wallet_Withdrawal::handle_receipt_upload( 'file' );
+			if ( $upload['error'] || ! $upload['id'] ) {
+				return $this->error( 'terawallet_rest_receipt_upload_failed', $upload['error'] ? $upload['error'] : __( 'The receipt could not be uploaded.', 'woo-wallet' ), 400 );
+			}
+			return new WP_REST_Response( array( 'receipt_id' => (int) $upload['id'] ), 201 );
+		}
 
 		/**
 		 * List/filter withdrawal requests.
@@ -490,6 +524,7 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 
 			$created_by   = (int) $row->created_by;
 			$processed_by = (int) $row->processed_by;
+			$has_receipt  = Woo_Wallet_Withdrawal::has_receipt( $row );
 
 			$data = array(
 				'id'                    => (int) $row->id,
@@ -504,17 +539,16 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 				'phone'                 => $row->phone,
 				'iban'                  => $row->iban ? $row->iban : null,
 				'reference_no'          => $row->reference_no ? $row->reference_no : null,
+				// Only ever set for a legacy receipt that could not be moved out
+				// of the Media Library; attached receipts have no attachment.
 				'receipt_id'            => $row->receipt_id ? (int) $row->receipt_id : null,
-				// Never wp_get_attachment_url(): once attached to a withdrawal,
-				// a receipt is relocated out of the public uploads tree (see
-				// Woo_Wallet_Withdrawal::protect_receipt_file()) specifically so
-				// that URL stops resolving — this must always be the protected
-				// endpoint instead. No nonce appended here (unlike
-				// Woo_Wallet_Withdrawal::receipt_view_url()'s admin-screen
-				// callers): whatever consumes this REST response fetches it with
-				// its own authenticated request headers.
-				'receipt_url'           => $row->receipt_id ? Woo_Wallet_Withdrawal::receipt_view_url( $row->id, false ) : null,
-				'receipt_expires_at'    => ( $row->receipt_id && Woo_Wallet_Withdrawal::receipt_retention_days() > 0 )
+				'has_receipt'           => $has_receipt,
+				// Always the protected endpoint, never a direct file URL. No
+				// nonce appended here (unlike Woo_Wallet_Withdrawal::receipt_view_url()'s
+				// admin-screen callers): whatever consumes this REST response
+				// fetches it with its own authenticated request headers.
+				'receipt_url'           => $has_receipt ? Woo_Wallet_Withdrawal::receipt_view_url( $row->id, false ) : null,
+				'receipt_expires_at'    => ( $has_receipt && Woo_Wallet_Withdrawal::receipt_retention_days() > 0 )
 					? mysql_to_rfc3339( gmdate( 'Y-m-d H:i:s', strtotime( $row->date_created ) + ( Woo_Wallet_Withdrawal::receipt_retention_days() * DAY_IN_SECONDS ) ) )
 					: null,
 				'status'                => $row->status,
@@ -569,6 +603,7 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 					'iban'                  => array( 'type' => array( 'string', 'null' ), 'context' => array( 'view' ) ),
 					'reference_no'          => array( 'type' => array( 'string', 'null' ), 'context' => array( 'view' ) ),
 					'receipt_id'            => array( 'type' => array( 'integer', 'null' ), 'context' => array( 'view' ) ),
+					'has_receipt'           => array( 'type' => 'boolean', 'context' => array( 'view' ), 'readonly' => true ),
 					'receipt_url'           => array( 'type' => array( 'string', 'null' ), 'context' => array( 'view' ), 'readonly' => true ),
 					'receipt_expires_at'    => array( 'type' => array( 'string', 'null' ), 'format' => 'date-time', 'context' => array( 'view' ), 'readonly' => true ),
 					'status'                => array( 'type' => 'string', 'enum' => array( 'pending', 'processing', 'paid', 'rejected' ), 'context' => array( 'view' ), 'readonly' => true ),

@@ -399,17 +399,7 @@ class Admin_Withdrawal_Rest_Test extends WP_Test_REST_TestCase {
 		$this->assertErrorResponse( 'terawallet_rest_invalid_receipt', $response, 400 );
 	}
 
-	/**
-	 * receipt_url must never be wp_get_attachment_url() — once attached to
-	 * a withdrawal, the file is relocated out of the public uploads tree
-	 * (Woo_Wallet_Withdrawal::protect_receipt_file()) specifically so that
-	 * URL stops resolving. Confirms the field points at the protected
-	 * terawallet/v1/me/withdrawals/{id}/receipt endpoint instead.
-	 */
-	public function test_receipt_url_points_to_the_protected_endpoint_not_the_raw_attachment_url() {
-		$attachment_id = self::factory()->attachment->create_upload_object( DIR_TESTDATA . '/images/one-blue-pixel-100x100.png' );
-		$raw_url       = wp_get_attachment_url( $attachment_id );
-
+	private function create_request_with_receipt_id( $receipt_id ) {
 		wp_set_current_user( $this->admin_id );
 		$request = new WP_REST_Request( 'POST', '/terawallet/v1/admin/withdrawals' );
 		$request->set_header( 'Idempotency-Key', wp_generate_password( 12, false ) );
@@ -420,20 +410,120 @@ class Admin_Withdrawal_Rest_Test extends WP_Test_REST_TestCase {
 			'beneficiary_name' => 'Mohamed Ali',
 			'account_number'   => '1234567890',
 			'phone'            => '01012345678',
-			'receipt_id'       => $attachment_id,
+			'receipt_id'       => $receipt_id,
 		) as $key => $value ) {
 			$request->set_param( $key, $value );
 		}
-		$response = $this->dispatch( $request );
+		return $this->dispatch( $request );
+	}
+
+	/**
+	 * Attaching a receipt deletes the temporary upload, so an ordinary
+	 * Media Library item — which may be in use elsewhere on the site — must
+	 * be refused outright, and left untouched.
+	 */
+	public function test_an_ordinary_media_library_item_is_refused_as_a_receipt() {
+		$attachment_id  = self::factory()->attachment->create_upload_object( DIR_TESTDATA . '/images/one-blue-pixel-100x100.png' );
+		$balance_before = $this->balance();
+
+		$response = $this->create_request_with_receipt_id( $attachment_id );
+
+		$this->assertErrorResponse( 'terawallet_rest_receipt_not_wallet_upload', $response, 400 );
+		$this->assertNotNull( get_post( $attachment_id ) );
+		$this->assertSame( $balance_before, $this->balance() );
+		wp_delete_attachment( $attachment_id, true );
+	}
+
+	/**
+	 * The full REST flow: upload through the plugin's own route, attach the
+	 * returned id, and the upload is gone from the Media Library — the
+	 * response points at the protected endpoint and nothing else.
+	 */
+	public function test_upload_route_then_attach_removes_the_upload_from_the_media_library() {
+		$tmp = wp_tempnam( 'receipt.png' );
+		copy( DIR_TESTDATA . '/images/one-blue-pixel-100x100.png', $tmp );
+		add_filter(
+			'woo_wallet_receipt_upload_overrides',
+			function ( $overrides ) {
+				$overrides['action'] = 'wp_handle_mock_upload'; // is_uploaded_file() can't pass outside a real HTTP upload.
+				return $overrides;
+			}
+		);
+
+		wp_set_current_user( $this->admin_id );
+		$upload = new WP_REST_Request( 'POST', '/terawallet/v1/admin/withdrawals/receipts' );
+		$upload->set_file_params(
+			array(
+				'file' => array(
+					'name'     => 'bank-transfer.png',
+					'type'     => 'image/png',
+					'tmp_name' => $tmp,
+					'error'    => 0,
+					'size'     => filesize( $tmp ),
+				),
+			)
+		);
+		$upload_response = $this->dispatch( $upload );
+		$this->assertSame( 201, $upload_response->get_status() );
+		$receipt_id = $upload_response->get_data()['receipt_id'];
+		$this->assertTrue( Woo_Wallet_Withdrawal::is_wallet_receipt_upload( $receipt_id ) );
+		$raw_url = wp_get_attachment_url( $receipt_id );
+
+		$response = $this->create_request_with_receipt_id( $receipt_id );
 		$data     = $response->get_data();
+		$this->assertSame( 201, $response->get_status() );
 
-		$this->assertNotEmpty( $data['receipt_url'] );
-		$this->assertStringContainsString( '/terawallet/v1/me/withdrawals/' . $data['id'] . '/receipt', $data['receipt_url'] );
+		$this->assertTrue( $data['has_receipt'] );
+		$this->assertNull( $data['receipt_id'] );
+		$this->assertStringContainsString( '/terawallet/v1/me/withdrawals/' . $data['id'] . '/receipt', urldecode( $data['receipt_url'] ) );
 		$this->assertNotSame( $raw_url, $data['receipt_url'] );
-
-		// The response field is fetched with the SPA's own auth headers, so
-		// (unlike the admin detail screen's plain <a href> link) it must not
-		// carry an embeddable nonce that would go stale on its own.
+		// Fetched with the client's own auth headers, so (unlike the admin
+		// detail screen's plain <a href> link) it must not carry a nonce
+		// that would go stale on its own.
 		$this->assertStringNotContainsString( '_wpnonce', $data['receipt_url'] );
+
+		$this->assertNull( get_post( $receipt_id ) );
+		$media = $this->dispatch( new WP_REST_Request( 'GET', '/wp/v2/media/' . $receipt_id ) );
+		$this->assertSame( 404, $media->get_status() );
+
+		$row = Woo_Wallet_Withdrawal::get_request( $data['id'] );
+		Woo_Wallet_Withdrawal::discard_staged_receipt( $row->receipt_key );
+	}
+
+	public function test_upload_route_rejects_a_disallowed_file_type() {
+		$tmp = wp_tempnam( 'receipt.php' );
+		file_put_contents( $tmp, '<?php echo 1;' );
+		add_filter(
+			'woo_wallet_receipt_upload_overrides',
+			function ( $overrides ) {
+				$overrides['action'] = 'wp_handle_mock_upload';
+				return $overrides;
+			}
+		);
+
+		wp_set_current_user( $this->admin_id );
+		$upload = new WP_REST_Request( 'POST', '/terawallet/v1/admin/withdrawals/receipts' );
+		$upload->set_file_params(
+			array(
+				'file' => array(
+					'name'     => 'shell.php',
+					'type'     => 'application/x-php',
+					'tmp_name' => $tmp,
+					'error'    => 0,
+					'size'     => filesize( $tmp ),
+				),
+			)
+		);
+		$this->assertErrorResponse( 'terawallet_rest_receipt_upload_failed', $this->dispatch( $upload ), 400 );
+		@unlink( $tmp );
+	}
+
+	public function test_upload_route_requires_a_file_and_an_admin() {
+		wp_set_current_user( $this->admin_id );
+		$this->assertErrorResponse( 'terawallet_rest_receipt_missing_file', $this->dispatch( new WP_REST_Request( 'POST', '/terawallet/v1/admin/withdrawals/receipts' ) ), 400 );
+
+		wp_set_current_user( $this->customer_id );
+		$response = $this->dispatch( new WP_REST_Request( 'POST', '/terawallet/v1/admin/withdrawals/receipts' ) );
+		$this->assertContains( $response->get_status(), array( 401, 403 ) );
 	}
 }

@@ -62,8 +62,8 @@ customer's point of view nothing meaningfully different has happened.
 An uploaded receipt (attached via `receipt_id` on create or on
 `admin/withdrawals/{id}/process`) is only kept for a limited time — **90
 days after the request's `date_created` by default** — after which a daily
-housekeeping sweep permanently deletes the Media Library file and clears
-`receipt_id`/`receipt_url` on the request. This is intentional (storage
+housekeeping sweep permanently deletes the stored file and clears
+`has_receipt`/`receipt_url` on the request. This is intentional (storage
 hygiene, not a bug): don't rely on a receipt URL staying valid indefinitely,
 and don't cache it past `receipt_expires_at`.
 
@@ -72,8 +72,8 @@ and don't cache it past `receipt_expires_at`.
   disables the sweep entirely) — treat 90 days as the default, not a
   guarantee, and always read `receipt_expires_at` from the response rather
   than hardcoding it.
-- Once expired, `receipt_url` (and, on the admin object, `receipt_id`)
-  simply read `null` again, exactly as if no receipt had ever been attached
+- Once expired, `receipt_url` simply reads `null` again (and, on the admin
+  object, `has_receipt` reads `false`), exactly as if no receipt had ever been attached
   — there is no separate "expired" status or error.
 - The request record itself (amount, bank details, status, reference
   number, notes) is never affected — only the uploaded file and the column
@@ -181,7 +181,7 @@ of another user's request id is not disclosed).
   "phone": "01012345678",
   "iban": "EG380019000500000000263180002",
   "reference_no": "TRX-99213",
-  "receipt_url": "https://example.com/wp-content/uploads/2026/09/receipt.pdf",
+  "receipt_url": "https://example.com/wp-json/terawallet/v1/me/withdrawals/88/receipt",
   "receipt_expires_at": "2026-12-15T09:58:12",
   "status": "paid",
   "notes": [
@@ -232,10 +232,15 @@ Manually log a withdrawal on a customer's behalf — e.g. a request that came
 in by phone. The record is attributed to the calling admin (`created_by`),
 distinct from the customer (`user_id`).
 
-A receipt is attached by id, not by raw upload: **upload the file to the
-standard `POST /wp/v2/media` endpoint first**, then pass the returned id as
-`receipt_id` here. Only PDF, PNG and JPG are accepted (checked by real mime
-type, not file extension).
+A receipt is attached in two steps: **upload the file to
+[`POST /admin/withdrawals/receipts`](#post-adminwithdrawalsreceipts) first**,
+then pass the returned `receipt_id` here. Only PDF, PNG and JPG are accepted
+(checked by real mime type, not file extension).
+
+An id from the standard `POST /wp/v2/media` endpoint is **not** accepted
+(`400 terawallet_rest_receipt_not_wallet_upload`): attaching a receipt copies
+it into private storage and deletes the temporary upload, and an ordinary
+Media Library item may be in use elsewhere on the site.
 
 **Body:**
 
@@ -250,7 +255,7 @@ type, not file extension).
 | `iban` | string | no | |
 | `reference_no` | string | no | Bank transfer reference |
 | `status` | `pending` \| `paid` | no, default `pending` | Use `paid` when the transfer was already sent (e.g. logging a completed phone request) |
-| `receipt_id` | integer | no | An attachment id from `POST /wp/v2/media` |
+| `receipt_id` | integer | no | The id returned by `POST /admin/withdrawals/receipts` |
 | `note` | string | no | |
 | `note_visibility` | `public` \| `private` | no, default `private` | `public` notes are visible to the customer via `/me/withdrawals` |
 
@@ -258,6 +263,21 @@ Requires `Idempotency-Key`. Returns `201` with the
 [admin withdrawal object](#admin-withdrawal-object), or `404` for an
 unknown `user_id`, or `400` for a validation failure (including an invalid
 or wrong-type `receipt_id`).
+
+### `POST /admin/withdrawals/receipts`
+
+Upload a receipt file ahead of attaching it. `multipart/form-data` with a
+single field named `file` (PDF, PNG or JPG). Returns `201`:
+
+```json
+{ "receipt_id": 1391 }
+```
+
+The id is a short-lived handle, not a permanent Media Library item: once it
+is attached to a withdrawal the upload is deleted and the id stops existing
+(`GET /wp/v2/media/1391` returns `404`). The receipt is from then on only
+readable through the request's `receipt_url`. An upload that is never
+attached is removed automatically after about a day.
 
 ### `GET /admin/withdrawals/{id}`
 
@@ -336,8 +356,9 @@ Returns the updated [admin withdrawal object](#admin-withdrawal-object).
   "phone": "01012345678",
   "iban": "EG380019000500000000263180002",
   "reference_no": "TRX-99213",
-  "receipt_id": 1391,
-  "receipt_url": "https://example.com/wp-content/uploads/2026/09/receipt.pdf",
+  "receipt_id": null,
+  "has_receipt": true,
+  "receipt_url": "https://example.com/wp-json/terawallet/v1/me/withdrawals/88/receipt",
   "receipt_expires_at": "2026-12-15T09:58:12",
   "status": "paid",
   "transaction_id": 5502,

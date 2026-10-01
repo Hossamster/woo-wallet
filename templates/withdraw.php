@@ -110,7 +110,7 @@ $ww_retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
 				<?php foreach ( $ww_history as $ww_row ) : ?>
 					<?php
 					$ww_public_notes = Woo_Wallet_Withdrawal::get_notes( $ww_row->id, 'public' );
-					$ww_receipt_url  = $ww_row->receipt_id ? wp_get_attachment_url( $ww_row->receipt_id ) : false;
+					$ww_receipt_url  = Woo_Wallet_Withdrawal::has_receipt( $ww_row ) ? Woo_Wallet_Withdrawal::receipt_view_url( $ww_row->id ) : false;
 					?>
 					<tr>
 						<td data-label="<?php esc_attr_e( 'Date', 'woo-wallet' ); ?>"><?php echo esc_html( wc_string_to_datetime( $ww_row->date_created )->date_i18n( wc_date_format() ) ); ?></td>

@@ -217,7 +217,7 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 		 * Securely download or view the transfer receipt.
 		 *
 		 * Protects customer privacy by ensuring only the withdrawal owner
-		 * (or a store manager) can access the receipt attachment.
+		 * (or a store manager) can access the receipt file.
 		 *
 		 * @param WP_REST_Request $request Full request.
 		 * @return WP_Error|void
@@ -232,21 +232,18 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 				return $this->error( 'rest_withdrawal_not_found', __( 'Withdrawal request not found.', 'woo-wallet' ), 404 );
 			}
 
-			if ( empty( $row->receipt_id ) ) {
+			if ( ! Woo_Wallet_Withdrawal::has_receipt( $row ) ) {
 				return $this->error( 'rest_receipt_not_found', __( 'No receipt is attached to this withdrawal request.', 'woo-wallet' ), 404 );
 			}
 
-			$file_path = get_attached_file( $row->receipt_id );
-			if ( ! $file_path || ! file_exists( $file_path ) ) {
+			$receipt = Woo_Wallet_Withdrawal::resolve_receipt_file( $row );
+			if ( ! $receipt ) {
 				return $this->error( 'rest_receipt_file_missing', __( 'Receipt file is missing or has expired according to retention policy.', 'woo-wallet' ), 404 );
 			}
 
-			$mime = get_post_mime_type( $row->receipt_id );
-			if ( ! $mime ) {
-				$mime = 'application/octet-stream';
-			}
-
-			$filename = basename( $file_path );
+			$file_path = $receipt['path'];
+			$mime      = $receipt['mime'];
+			$filename  = $receipt['filename'];
 
 			if ( ! headers_sent() ) {
 				header( 'Content-Type: ' . $mime );
@@ -323,7 +320,7 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 
 			// Receipts are served through an authenticated endpoint rather than direct uploads link.
 			// Receipts are removed by a retention sweep (default 90 days after request date).
-			$receipt_url        = $row->receipt_id ? rest_url( sprintf( '%s/%s/%d/receipt', $this->namespace, $this->rest_base, (int) $row->id ) ) : null;
+			$receipt_url        = Woo_Wallet_Withdrawal::has_receipt( $row ) ? rest_url( sprintf( '%s/%s/%d/receipt', $this->namespace, $this->rest_base, (int) $row->id ) ) : null;
 			$receipt_expires_at = null;
 			if ( $receipt_url ) {
 				$retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();

@@ -24,6 +24,7 @@ delete_option( '_woo_wallet_recharge_product' );
 // WALLET_REMOVE_ALL_DATA, since the callback it points at won't exist once
 // the plugin's files are gone either way.
 wp_clear_scheduled_hook( 'woo_wallet_withdrawal_cleanup_receipts_cron' );
+wp_clear_scheduled_hook( 'woo_wallet_withdrawal_check_receipt_protection_cron' );
 
 /*
  * Only remove ALL plugins data if WALLET_REMOVE_ALL_DATA constant is set to true in user's
