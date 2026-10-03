@@ -870,16 +870,19 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 					delete_transient( 'woo_wallet_staff_error_' . get_current_user_id() );
 					echo '<div class="notice notice-error"><p>' . esc_html( implode( ' ', $staff_errors ) ) . '</p></div>';
 				}
-				if ( Woo_Wallet_Staff::is_limited() ) {
-					$staff_limits = Woo_Wallet_Staff::get_limits( get_current_user_id() );
-					echo '<div class="notice notice-info inline"><p>' . esc_html(
-						sprintf(
+				if ( ! current_user_can( Woo_Wallet_Staff::CAP_ADJUST_BALANCE ) && current_user_can( Woo_Wallet_Staff::CAP_REQUEST_APPROVAL ) ) {
+					if ( Woo_Wallet_Staff::is_limited() ) {
+						$staff_limits = Woo_Wallet_Staff::get_limits( get_current_user_id() );
+						$staff_text   = sprintf(
 							/* translators: 1: per-credit limit, 2: amount left today */
 							__( 'You can credit up to %1$s at a time, with %2$s left today.', 'woo-wallet' ),
 							wp_strip_all_tags( wc_price( $staff_limits['per_credit'] ) ),
 							wp_strip_all_tags( wc_price( max( 0, $staff_limits['daily'] - Woo_Wallet_Staff::credited_today( get_current_user_id() ) ) ) )
-						)
-					) . '</p></div>';
+						) . ' ' . __( 'For more than that, or a debit:', 'woo-wallet' );
+					} else {
+						$staff_text = __( 'To credit or debit a wallet:', 'woo-wallet' );
+					}
+					echo '<div class="notice notice-info inline"><p>' . esc_html( $staff_text ) . ' <a href="' . esc_url( Woo_Wallet_Approvals::page_url( array( 'action' => 'new', 'type' => Woo_Wallet_Approvals::TYPE_CREDIT ) ) ) . '">' . esc_html__( 'send a request for approval', 'woo-wallet' ) . '</a></p></div>';
 				}
 				?>
 				<div class="tw-wallet-users-actions">

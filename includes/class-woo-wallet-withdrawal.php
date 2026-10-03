@@ -2046,6 +2046,8 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				<h1 class="wp-heading-inline"><?php esc_html_e( 'Wallet Withdrawals', 'woo-wallet' ); ?></h1>
 				<?php if ( current_user_can( Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS ) ) : ?>
 					<a href="<?php echo esc_url( $new_url ); ?>" class="page-title-action"><?php esc_html_e( 'Create Withdrawal', 'woo-wallet' ); ?></a>
+				<?php elseif ( current_user_can( Woo_Wallet_Staff::CAP_REQUEST_APPROVAL ) ) : ?>
+					<a href="<?php echo esc_url( Woo_Wallet_Approvals::page_url( array( 'action' => 'new', 'type' => Woo_Wallet_Approvals::TYPE_WITHDRAWAL ) ) ); ?>" class="page-title-action"><?php esc_html_e( 'Request a withdrawal for a customer', 'woo-wallet' ); ?></a>
 				<?php endif; ?>
 				<hr class="wp-header-end" />
 				<?php

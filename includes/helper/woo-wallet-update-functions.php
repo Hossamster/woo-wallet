@@ -524,3 +524,14 @@ function woo_wallet_update_183_receipts_out_of_media_library() {
 	}
 	Woo_Wallet_Withdrawal::migrate_legacy_receipts();
 }
+
+/**
+ * 1.10.0: create `woo_wallet_approval_requests` — requests a support agent
+ * sends to a shop manager or administrator (Woo_Wallet_Approvals).
+ *
+ * @return void
+ */
+function woo_wallet_update_1100_approval_requests() {
+	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+	dbDelta( Woo_Wallet_Install::get_approval_requests_schema() );
+}

@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.9.2
+Stable tag: 1.10.0
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,12 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.10.0 =
+* New - Approval requests. Anything that takes money out of a customer's wallet is no longer something a support agent can do directly: a debit, logging a withdrawal for a customer, or a credit above the agent's own limit is sent as a request instead (Axfit Wallet → My Requests → New request, or the "Request a withdrawal for a customer" button on the Withdrawals screen). Nothing in the customer's wallet changes until a shop manager or administrator approves it under Axfit Wallet → Approvals; it is then carried out once, in the approver's name, through the same code as their own actions. If it can no longer be carried out (for example the customer's balance is now too low for a debit) it is marked as failed with the reason and nothing changes. A request stays open until an approver approves or rejects it, or the agent cancels it. Bank details in a withdrawal request are stored encrypted.
+* New - Approval emails, managed under WooCommerce → Settings → Emails: "Wallet approval requested" goes to the approvers an administrator chooses under Axfit Wallet → Staff → Approval emails (every shop manager and administrator until a choice is saved), and "Wallet approval decided" goes to the agent who sent the request. Anyone chosen can pause their own emails from the Approvals screen; if no one chosen is receiving them, they go to every administrator instead and the Staff screen says so.
+* New - Support agent levels. Each agent has a level that decides what they can do on top of viewing wallets and sending requests: add notes, give goodwill credit, see full bank details, open receipts. Each level has its own goodwill credit limits (per credit and per day), and an agent can be given personal limits that override their level's. Three levels are set up to start with and can be edited under Axfit Wallet → Staff → Levels. Agents added in 1.9.x are on Level 2 and keep the limits they already had.
+* Security - Wallet Support Agents can no longer log a withdrawal directly. Logging a withdrawal reserves the amount from the customer's wallet immediately and had no limit, so an agent who was not allowed to debit wallets could still freeze any customer's balance that way. They now send it as an approval request. The capability is also removed from the role on sites that already have it.
 
 = v1.9.2 =
 * Fix - A balance adjustment submitted more than once (a double click on "Update balance", or the browser re-sending the form) was applied every time it reached the server. Every money-moving form on the Wallet Users screen (Edit Balance, and the bulk Credit / Debit actions) now carries a one-time token, so a repeated submission is refused instead of crediting or debiting again, and the button is disabled after the first click.

@@ -35,6 +35,10 @@ if ( defined( 'WALLET_REMOVE_ALL_DATA' ) && true === WALLET_REMOVE_ALL_DATA ) {
 	remove_role( 'wallet_support_agent' );
 	delete_metadata( 'user', 0, '_woo_wallet_staff_credit_limit', '', true );
 	delete_metadata( 'user', 0, '_woo_wallet_staff_daily_limit', '', true );
+	delete_metadata( 'user', 0, '_woo_wallet_staff_level', '', true );
+	delete_metadata( 'user', 0, '_woo_wallet_approval_emails_paused', '', true );
+	delete_option( 'woo_wallet_staff_levels' );
+	delete_option( 'woo_wallet_approval_email_recipients' );
 	// Tables. Must stay in sync with every CREATE TABLE in Woo_Wallet_Install — the
 	// "uninstall.php drops every table install creates" CI check enforces this.
 	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_transactions" );
@@ -42,6 +46,7 @@ if ( defined( 'WALLET_REMOVE_ALL_DATA' ) && true === WALLET_REMOVE_ALL_DATA ) {
 	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_referrals" );
 	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_withdrawals" );
 	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_withdrawal_notes" );
+	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_approval_requests" );
 
 	// Delete the balance cache user meta — the ledger it mirrored no longer exists.
 	$wpdb->query( "DELETE FROM $wpdb->usermeta WHERE meta_key = '_current_woo_wallet_balance'" );

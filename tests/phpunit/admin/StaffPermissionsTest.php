@@ -45,6 +45,7 @@ class Staff_Permissions_Test extends WP_UnitTestCase {
 			$this->assertTrue( user_can( $this->agent_id, $cap ), $cap );
 		}
 		foreach ( array(
+			Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS,
 			Woo_Wallet_Staff::CAP_ADJUST_BALANCE,
 			Woo_Wallet_Staff::CAP_VIEW_BANK_DETAILS,
 			Woo_Wallet_Staff::CAP_VIEW_RECEIPTS,
@@ -56,6 +57,59 @@ class Staff_Permissions_Test extends WP_UnitTestCase {
 		) as $cap ) {
 			$this->assertFalse( user_can( $this->agent_id, $cap ), $cap );
 		}
+	}
+
+	/**
+	 * Logging a withdrawal reserves the amount from the customer's wallet
+	 * immediately and has no limit, so an agent could freeze any customer's
+	 * balance with it. Sites whose role was created while it still had the
+	 * capability must lose it too, not only fresh installs.
+	 */
+	public function test_an_existing_agent_role_loses_the_create_withdrawals_capability() {
+		get_role( Woo_Wallet_Staff::ROLE )->add_cap( Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS );
+		$this->assertTrue( get_role( Woo_Wallet_Staff::ROLE )->has_cap( Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS ), 'Precondition: a role created by v1.9.0-1.9.2.' );
+
+		Woo_Wallet_Staff::ensure_role();
+
+		$this->assertFalse( get_role( Woo_Wallet_Staff::ROLE )->has_cap( Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS ) );
+		$this->assertFalse( user_can( self::factory()->user->create( array( 'role' => Woo_Wallet_Staff::ROLE ) ), Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS ) );
+		$this->assertTrue( get_role( Woo_Wallet_Staff::ROLE )->has_cap( Woo_Wallet_Staff::CAP_VIEW ), 'The capabilities every agent keeps stay on the role.' );
+		$this->assertTrue( get_role( Woo_Wallet_Staff::ROLE )->has_cap( Woo_Wallet_Staff::CAP_REQUEST_APPROVAL ), 'An existing role gains the request capability.' );
+	}
+
+	public function test_agent_cannot_create_a_withdrawal_or_reserve_a_customers_balance() {
+		wp_set_current_user( $this->agent_id );
+		$_POST = array(
+			'_wpnonce'         => wp_create_nonce( 'woo_wallet_withdrawal_create' ),
+			'user_id'          => $this->customer_id,
+			'amount'           => 100,
+			'bank_name'        => array_key_first( Woo_Wallet_Withdrawal::get_configured_banks() ),
+			'beneficiary_name' => 'Mohamed Ali',
+			'account_number'   => '1234567890',
+			'phone'            => '01012345678',
+		);
+		$_REQUEST = $_POST;
+		try {
+			( new Woo_Wallet_Withdrawal() )->handle_admin_create_request();
+			$this->fail( 'An agent must be refused.' );
+		} catch ( WPDieException $e ) {
+			$this->assertStringContainsString( 'permission', $e->getMessage() );
+		} finally {
+			$_POST    = array();
+			$_REQUEST = array();
+		}
+		$this->assertSame( 500.0, $this->balance() );
+		$this->assertSame( 0, Woo_Wallet_Withdrawal::count_requests( array( 'user_id' => $this->customer_id ) ) );
+	}
+
+	public function test_agent_is_not_offered_the_create_withdrawal_button() {
+		wp_set_current_user( $this->agent_id );
+		ob_start();
+		( new Woo_Wallet_Withdrawal() )->render_admin_page();
+		$html = ob_get_clean();
+
+		$this->assertStringNotContainsString( 'Create Withdrawal', $html );
+		$this->assertStringContainsString( 'Request a withdrawal for a customer', $html );
 	}
 
 	public function test_shop_manager_has_everything_operational_but_not_settings() {
@@ -264,7 +318,7 @@ class Staff_Permissions_Test extends WP_UnitTestCase {
 	public function test_save_agent_adds_the_role_on_top_of_the_existing_one() {
 		$user_id = self::factory()->user->create( array( 'role' => 'customer', 'user_email' => 'agent@example.com' ) );
 
-		$result = Woo_Wallet_Staff::save_agent( 'agent@example.com', 15, 60 );
+		$result = Woo_Wallet_Staff::save_agent( 'agent@example.com', 'level_2', array( 'per_credit' => 15, 'daily' => 60 ) );
 
 		$this->assertInstanceOf( 'WP_User', $result );
 		$roles = get_userdata( $user_id )->roles;
@@ -275,13 +329,14 @@ class Staff_Permissions_Test extends WP_UnitTestCase {
 	}
 
 	public function test_save_agent_rejects_a_per_credit_limit_above_the_daily_limit() {
-		$result = Woo_Wallet_Staff::save_agent( $this->agent_id, 100, 50 );
+		$result = Woo_Wallet_Staff::save_agent( $this->agent_id, 'level_2', array( 'per_credit' => 100, 'daily' => 50 ) );
 		$this->assertSame( 'woo_wallet_staff_bad_limits', $result->get_error_code() );
 	}
 
 	public function test_save_agent_refuses_a_manager_and_an_unknown_user() {
-		$this->assertSame( 'woo_wallet_staff_already_manager', Woo_Wallet_Staff::save_agent( $this->manager_id, 10, 10 )->get_error_code() );
-		$this->assertSame( 'woo_wallet_staff_not_found', Woo_Wallet_Staff::save_agent( 'nobody@example.com', 10, 10 )->get_error_code() );
+		$this->assertSame( 'woo_wallet_staff_already_manager', Woo_Wallet_Staff::save_agent( $this->manager_id, 'level_2' )->get_error_code() );
+		$this->assertSame( 'woo_wallet_staff_not_found', Woo_Wallet_Staff::save_agent( 'nobody@example.com', 'level_2' )->get_error_code() );
+		$this->assertSame( 'woo_wallet_staff_level', Woo_Wallet_Staff::save_agent( $this->agent_id, 'level_9' )->get_error_code() );
 	}
 
 	public function test_remove_agent_takes_the_access_and_limits_away() {
@@ -292,6 +347,79 @@ class Staff_Permissions_Test extends WP_UnitTestCase {
 		$this->assertNotContains( Woo_Wallet_Staff::ROLE, get_userdata( $this->agent_id )->roles );
 		$this->assertFalse( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_VIEW ) );
 		$this->assertSame( array( 'per_credit' => 0.0, 'daily' => 0.0 ), Woo_Wallet_Staff::get_limits( $this->agent_id ) );
+	}
+
+	// -- levels -------------------------------------------------------------
+
+	public function test_an_agent_with_no_level_recorded_gets_the_default_level() {
+		$this->assertSame( Woo_Wallet_Staff::DEFAULT_LEVEL, Woo_Wallet_Staff::get_agent_level( $this->agent_id ) );
+		$this->assertTrue( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_GOODWILL_CREDIT ) );
+		$this->assertTrue( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_ADD_NOTES ) );
+	}
+
+	public function test_the_level_decides_what_an_agent_can_do() {
+		Woo_Wallet_Staff::save_agent( $this->agent_id, 'level_1' );
+		$this->assertTrue( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_ADD_NOTES ) );
+		$this->assertFalse( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_GOODWILL_CREDIT ) );
+		$this->assertFalse( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_VIEW_BANK_DETAILS ) );
+
+		Woo_Wallet_Staff::save_agent( $this->agent_id, 'level_3' );
+		$this->assertTrue( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_GOODWILL_CREDIT ) );
+		$this->assertTrue( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_VIEW_BANK_DETAILS ) );
+		$this->assertTrue( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_VIEW_RECEIPTS ) );
+		// Never, at any level.
+		$this->assertFalse( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_ADJUST_BALANCE ) );
+		$this->assertFalse( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS ) );
+		$this->assertFalse( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_APPROVE_REQUESTS ) );
+	}
+
+	public function test_an_administrator_can_change_what_a_level_allows() {
+		Woo_Wallet_Staff::save_agent( $this->agent_id, 'level_3' );
+		$this->assertTrue( Woo_Wallet_Staff::save_level( 'level_3', 'Senior', array( Woo_Wallet_Staff::CAP_ADD_NOTES ), 0, 0 ) );
+
+		$this->assertFalse( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_VIEW_BANK_DETAILS ) );
+		$this->assertSame( 'Senior', Woo_Wallet_Staff::get_levels()['level_3']['name'] );
+	}
+
+	public function test_a_level_cannot_switch_on_anything_that_takes_money_from_a_customer() {
+		Woo_Wallet_Staff::save_level( 'level_3', 'Senior', array( Woo_Wallet_Staff::CAP_ADJUST_BALANCE, Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS, Woo_Wallet_Staff::CAP_ADD_NOTES ), 0, 0 );
+		Woo_Wallet_Staff::save_agent( $this->agent_id, 'level_3' );
+
+		$this->assertSame( array( Woo_Wallet_Staff::CAP_ADD_NOTES ), Woo_Wallet_Staff::get_levels()['level_3']['caps'] );
+		$this->assertFalse( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_ADJUST_BALANCE ) );
+		$this->assertFalse( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_CREATE_WITHDRAWALS ) );
+	}
+
+	public function test_the_agent_uses_the_level_limits_unless_given_personal_ones() {
+		Woo_Wallet_Staff::save_level( 'level_2', 'Goodwill', array( Woo_Wallet_Staff::CAP_GOODWILL_CREDIT ), 10, 30 );
+		Woo_Wallet_Staff::save_agent( $this->agent_id, 'level_2' );
+		$this->assertSame( array( 'per_credit' => 10.0, 'daily' => 30.0 ), Woo_Wallet_Staff::get_limits( $this->agent_id ) );
+
+		wp_set_current_user( $this->agent_id );
+		$this->assertIsInt( Woo_Wallet_Staff::adjust( 'credit', $this->customer_id, 10, 'level limit' ) );
+		$this->assertSame( 'woo_wallet_staff_over_limit', Woo_Wallet_Staff::adjust( 'credit', $this->customer_id, 11, 'over' )->get_error_code() );
+
+		Woo_Wallet_Staff::save_agent( $this->agent_id, 'level_2', array( 'per_credit' => 25, 'daily' => 100 ) );
+		$this->assertSame( array( 'per_credit' => 25.0, 'daily' => 100.0 ), Woo_Wallet_Staff::get_limits( $this->agent_id ) );
+		$this->assertIsInt( Woo_Wallet_Staff::adjust( 'credit', $this->customer_id, 25, 'personal limit' ) );
+
+		// Saving without personal limits goes back to the level's.
+		Woo_Wallet_Staff::save_agent( $this->agent_id, 'level_2' );
+		$this->assertSame( array( 'per_credit' => 10.0, 'daily' => 30.0 ), Woo_Wallet_Staff::get_limits( $this->agent_id ) );
+	}
+
+	public function test_agents_added_before_levels_keep_their_limits() {
+		// Exactly what v1.9.x stored: role + two limit metas, no level.
+		Woo_Wallet_Staff::set_limits( $this->agent_id, 20, 50 );
+
+		$this->assertSame( Woo_Wallet_Staff::DEFAULT_LEVEL, Woo_Wallet_Staff::get_agent_level( $this->agent_id ) );
+		$this->assertSame( array( 'per_credit' => 20.0, 'daily' => 50.0 ), Woo_Wallet_Staff::get_limits( $this->agent_id ) );
+		$this->assertTrue( user_can( $this->agent_id, Woo_Wallet_Staff::CAP_GOODWILL_CREDIT ) );
+	}
+
+	public function test_a_level_rejects_a_per_credit_limit_above_its_daily_limit() {
+		$this->assertSame( 'woo_wallet_staff_bad_limits', Woo_Wallet_Staff::save_level( 'level_2', 'x', array(), 50, 10 )->get_error_code() );
+		$this->assertSame( 'woo_wallet_staff_level', Woo_Wallet_Staff::save_level( 'level_9', 'x', array(), 0, 0 )->get_error_code() );
 	}
 
 	// -- what an agent sees on the withdrawal screens ----------------------

@@ -73,6 +73,9 @@ class Woo_Wallet_Install {
 		'1.8.3'  => array(
 			'woo_wallet_update_183_receipts_out_of_media_library',
 		),
+		'1.10.0' => array(
+			'woo_wallet_update_1100_approval_requests',
+		),
 	);
 	/**
 	 * Plugin install
@@ -154,6 +157,7 @@ class Woo_Wallet_Install {
 		$tables .= "\n" . self::get_referrals_schema();
 		$tables .= "\n" . self::get_withdrawals_schema();
 		$tables .= "\n" . self::get_withdrawal_notes_schema();
+		$tables .= "\n" . self::get_approval_requests_schema();
 		return $tables;
 	}
 
@@ -301,6 +305,44 @@ class Woo_Wallet_Install {
             date_created timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY  (id ),
             KEY withdrawal_id (withdrawal_id )
+        ) ENGINE=InnoDB $collate;";
+	}
+
+	/**
+	 * Approval requests a support agent sends to a shop manager or
+	 * administrator (see Woo_Wallet_Approvals). `payload` holds a
+	 * withdrawal's bank details as JSON, account number and IBAN encrypted.
+	 *
+	 * @global object $wpdb
+	 * @return string
+	 */
+	public static function get_approval_requests_schema() {
+		global $wpdb;
+		$collate = '';
+
+		if ( $wpdb->has_cap( 'collation' ) ) {
+			$collate = $wpdb->get_charset_collate();
+		}
+
+		return "CREATE TABLE {$wpdb->base_prefix}woo_wallet_approval_requests (
+            id BIGINT UNSIGNED NOT NULL auto_increment,
+            type varchar(20 ) NOT NULL DEFAULT '',
+            customer_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            amount DECIMAL( 16,8 ) NOT NULL DEFAULT 0,
+            currency varchar(20 ) NOT NULL DEFAULT '',
+            payload longtext NULL,
+            reason text NULL,
+            status varchar(20 ) NOT NULL DEFAULT 'pending',
+            requested_by BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            decided_by BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            decision_note text NULL,
+            failure_reason text NULL,
+            result_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            date_created datetime NOT NULL,
+            date_decided datetime NULL,
+            PRIMARY KEY  (id ),
+            KEY status (status ),
+            KEY requested_by (requested_by )
         ) ENGINE=InnoDB $collate;";
 	}
 
