@@ -39,6 +39,7 @@ if ( defined( 'WALLET_REMOVE_ALL_DATA' ) && true === WALLET_REMOVE_ALL_DATA ) {
 	delete_metadata( 'user', 0, '_woo_wallet_approval_emails_paused', '', true );
 	delete_option( 'woo_wallet_staff_levels' );
 	delete_option( 'woo_wallet_approval_email_recipients' );
+	delete_option( 'woo_wallet_approval_email_excluded' );
 	// Tables. Must stay in sync with every CREATE TABLE in Woo_Wallet_Install — the
 	// "uninstall.php drops every table install creates" CI check enforces this.
 	$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->base_prefix}woo_wallet_transactions" );

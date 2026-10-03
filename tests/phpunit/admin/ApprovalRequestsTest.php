@@ -26,7 +26,8 @@ class Approval_Requests_Test extends WP_UnitTestCase {
 
 	public function tear_down() {
 		reset_phpmailer_instance();
-		delete_option( Woo_Wallet_Approvals::RECIPIENTS_OPTION );
+		delete_option( Woo_Wallet_Approvals::EXCLUDED_OPTION );
+		delete_option( Woo_Wallet_Approvals::LEGACY_RECIPIENTS_OPTION );
 		parent::tear_down();
 	}
 
@@ -130,6 +131,25 @@ class Approval_Requests_Test extends WP_UnitTestCase {
 		$this->assertSame( $this->admin_id, (int) $created_by );
 	}
 
+	/**
+	 * The description is what the customer sees in their wallet history and
+	 * in the transaction email: only the agent's reason — not the internal
+	 * request number or which agent asked, which go in the meta instead.
+	 */
+	public function test_the_customer_sees_only_the_reason_not_internal_details() {
+		global $wpdb;
+		$id = $this->request( Woo_Wallet_Approvals::TYPE_CREDIT, 100, 'Sorry for the late delivery' );
+
+		wp_set_current_user( $this->manager_id );
+		Woo_Wallet_Approvals::approve( $id );
+
+		$transaction_id = (int) Woo_Wallet_Approvals::get( $id )->result_id;
+		$details        = $wpdb->get_var( $wpdb->prepare( "SELECT details FROM {$wpdb->base_prefix}woo_wallet_transactions WHERE transaction_id = %d", $transaction_id ) );
+		$this->assertSame( 'Sorry for the late delivery', $details );
+		$this->assertSame( (string) $id, (string) get_wallet_transaction_meta( $transaction_id, '_woo_wallet_approval_request_id', true ) );
+		$this->assertSame( (string) $this->agent_id, (string) get_wallet_transaction_meta( $transaction_id, '_woo_wallet_requested_by', true ) );
+	}
+
 	public function test_a_debit_the_customer_can_no_longer_afford_fails_without_changing_anything() {
 		$id = $this->request( Woo_Wallet_Approvals::TYPE_DEBIT, 800, 'chargeback' );
 
@@ -214,7 +234,8 @@ class Approval_Requests_Test extends WP_UnitTestCase {
 
 	public function test_only_chosen_recipients_who_have_not_paused_get_new_request_emails() {
 		$second_manager = self::factory()->user->create( array( 'role' => 'shop_manager', 'user_email' => 'manager2@example.com' ) );
-		update_option( Woo_Wallet_Approvals::RECIPIENTS_OPTION, array( $this->manager_id, $second_manager ) );
+		$approver_ids   = wp_list_pluck( Woo_Wallet_Approvals::approvers(), 'ID' );
+		update_option( Woo_Wallet_Approvals::EXCLUDED_OPTION, array_values( array_diff( $approver_ids, array( $this->manager_id, $second_manager ) ) ) );
 		update_user_meta( $second_manager, Woo_Wallet_Approvals::PAUSE_META, 1 );
 
 		$this->request( Woo_Wallet_Approvals::TYPE_CREDIT, 100, 'goodwill' );
@@ -223,7 +244,8 @@ class Approval_Requests_Test extends WP_UnitTestCase {
 	}
 
 	public function test_if_every_chosen_recipient_paused_administrators_get_it_instead() {
-		update_option( Woo_Wallet_Approvals::RECIPIENTS_OPTION, array( $this->manager_id ) );
+		$approver_ids = wp_list_pluck( Woo_Wallet_Approvals::approvers(), 'ID' );
+		update_option( Woo_Wallet_Approvals::EXCLUDED_OPTION, array_values( array_diff( $approver_ids, array( $this->manager_id ) ) ) );
 		update_user_meta( $this->manager_id, Woo_Wallet_Approvals::PAUSE_META, 1 );
 
 		$recipients = Woo_Wallet_Approvals::email_recipients();
@@ -233,6 +255,33 @@ class Approval_Requests_Test extends WP_UnitTestCase {
 		$to = $this->sent_to();
 		$this->assertContains( 'admin@example.com', $to );
 		$this->assertNotContains( 'manager@example.com', $to, 'A shop manager is not an administrator.' );
+	}
+
+	/**
+	 * Someone who becomes an approver after an administrator saved the list
+	 * must get the emails without anyone having to remember to add them —
+	 * while the people the administrator took off stay off.
+	 */
+	public function test_a_new_approver_gets_emails_and_an_excluded_one_stays_excluded() {
+		update_option( Woo_Wallet_Approvals::EXCLUDED_OPTION, array( $this->manager_id ) );
+		$new_manager = self::factory()->user->create( array( 'role' => 'shop_manager', 'user_email' => 'new-manager@example.com' ) );
+
+		$this->request( Woo_Wallet_Approvals::TYPE_CREDIT, 100, 'goodwill' );
+
+		$to = $this->sent_to();
+		$this->assertContains( 'new-manager@example.com', $to );
+		$this->assertNotContains( 'manager@example.com', $to );
+	}
+
+	public function test_a_recipient_list_saved_by_an_earlier_build_is_converted_to_exclusions() {
+		update_option( Woo_Wallet_Approvals::LEGACY_RECIPIENTS_OPTION, array( $this->admin_id ) );
+
+		$chosen = Woo_Wallet_Approvals::chosen_recipient_ids();
+
+		$this->assertContains( $this->admin_id, $chosen );
+		$this->assertNotContains( $this->manager_id, $chosen );
+		$this->assertFalse( get_option( Woo_Wallet_Approvals::LEGACY_RECIPIENTS_OPTION ) );
+		$this->assertContains( $this->manager_id, Woo_Wallet_Approvals::excluded_recipient_ids() );
 	}
 
 	public function test_the_agent_is_emailed_the_decision() {
@@ -320,6 +369,9 @@ class Approval_Requests_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'agent@example.com', $agents );
 		$this->assertStringContainsString( 'Level 3', $agents );
 		$this->assertStringContainsString( 'woo_wallet_staff_level', $levels );
+		$this->assertStringContainsString( 'Last 4 digits only', $levels, 'The comparison table shows what a level without bank details sees.' );
+		$this->assertStringContainsString( 'By approval request', $levels );
+		$this->assertStringContainsString( 'No limit set yet', $levels );
 		$this->assertStringContainsString( 'manager@example.com', $emails );
 
 		// A shop manager manages agents and levels, but not who gets emails.

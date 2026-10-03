@@ -36,10 +36,18 @@ if ( ! class_exists( 'Woo_Wallet_Approvals' ) ) {
 		const STATUS_FAILED     = 'failed';
 
 		/**
-		 * Option: user ids an administrator chose to receive new-request emails.
-		 * Unset means every approver.
+		 * Option: approvers an administrator took off the new-request emails.
+		 * Stored as exclusions rather than a list of recipients, so anyone who
+		 * becomes an approver later is included without someone having to
+		 * remember to add them.
 		 */
-		const RECIPIENTS_OPTION = 'woo_wallet_approval_email_recipients';
+		const EXCLUDED_OPTION = 'woo_wallet_approval_email_excluded';
+
+		/**
+		 * Option written by earlier 1.10.0 builds: the recipients themselves.
+		 * Converted to EXCLUDED_OPTION the first time it is read.
+		 */
+		const LEGACY_RECIPIENTS_OPTION = 'woo_wallet_approval_email_recipients';
 
 		/**
 		 * User meta: a recipient paused their own new-request emails.
@@ -355,7 +363,6 @@ if ( ! class_exists( 'Woo_Wallet_Approvals' ) ) {
 					: (int) $result['id'];
 			}
 
-			$description = $row->reason . ' (' . $origin . ')';
 			if ( self::TYPE_DEBIT === $row->type ) {
 				$balance = (float) woo_wallet()->wallet->get_wallet_balance( (int) $row->customer_id, 'edit' );
 				$amount  = (float) $row->amount;
@@ -363,7 +370,16 @@ if ( ! class_exists( 'Woo_Wallet_Approvals' ) ) {
 					return new WP_Error( 'woo_wallet_approval_insufficient', __( 'The customer does not have enough balance for this debit.', 'woo-wallet' ) );
 				}
 			}
-			return Woo_Wallet_Staff::adjust( $row->type, (int) $row->customer_id, (float) $row->amount, $description, array( 'category' => 'adjustment' ) );
+			// The description is what the customer sees in their wallet history
+			// and transaction email — only the agent's reason, never internal
+			// details like the request number or the agent's name, which go in
+			// the transaction meta instead.
+			$transaction_id = Woo_Wallet_Staff::adjust( $row->type, (int) $row->customer_id, (float) $row->amount, $row->reason, array( 'category' => 'adjustment' ) );
+			if ( ! is_wp_error( $transaction_id ) ) {
+				update_wallet_transaction_meta( $transaction_id, '_woo_wallet_approval_request_id', (int) $row->id, (int) $row->customer_id );
+				update_wallet_transaction_meta( $transaction_id, '_woo_wallet_requested_by', (int) $row->requested_by, (int) $row->customer_id );
+			}
+			return $transaction_id;
 		}
 
 		/**
@@ -474,17 +490,28 @@ if ( ! class_exists( 'Woo_Wallet_Approvals' ) ) {
 		}
 
 		/**
-		 * The approvers an administrator chose to email (all of them until
-		 * a choice is saved).
+		 * Approvers an administrator took off the new-request emails.
+		 *
+		 * @return int[]
+		 */
+		public static function excluded_recipient_ids() {
+			$legacy = get_option( self::LEGACY_RECIPIENTS_OPTION, null );
+			if ( is_array( $legacy ) ) {
+				$approver_ids = array_map( 'intval', wp_list_pluck( self::approvers(), 'ID' ) );
+				update_option( self::EXCLUDED_OPTION, array_values( array_diff( $approver_ids, array_map( 'intval', $legacy ) ) ), false );
+				delete_option( self::LEGACY_RECIPIENTS_OPTION );
+			}
+			return array_map( 'intval', (array) get_option( self::EXCLUDED_OPTION, array() ) );
+		}
+
+		/**
+		 * The approvers chosen to get new-request emails: every approver,
+		 * including ones added later, except those an administrator took off.
 		 *
 		 * @return int[]
 		 */
 		public static function chosen_recipient_ids() {
-			$chosen = get_option( self::RECIPIENTS_OPTION, null );
-			if ( ! is_array( $chosen ) ) {
-				return wp_list_pluck( self::approvers(), 'ID' );
-			}
-			return array_map( 'intval', $chosen );
+			return array_values( array_diff( array_map( 'intval', wp_list_pluck( self::approvers(), 'ID' ) ), self::excluded_recipient_ids() ) );
 		}
 
 		/**
@@ -1009,7 +1036,7 @@ if ( ! class_exists( 'Woo_Wallet_Approvals' ) ) {
 			check_admin_referer( 'woo_wallet_approval_recipients' );
 			$approver_ids = wp_list_pluck( self::approvers(), 'ID' );
 			$chosen       = isset( $_POST['recipients'] ) ? array_map( 'absint', (array) wp_unslash( $_POST['recipients'] ) ) : array();
-			update_option( self::RECIPIENTS_OPTION, array_values( array_intersect( $chosen, $approver_ids ) ), false );
+			update_option( self::EXCLUDED_OPTION, array_values( array_diff( array_map( 'intval', $approver_ids ), $chosen ) ), false );
 			set_transient(
 				'woo_wallet_staff_notice_' . get_current_user_id(),
 				array(

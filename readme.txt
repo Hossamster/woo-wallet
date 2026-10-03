@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.10.0
+Stable tag: 1.10.1
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,11 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.10.1 =
+* Fix - When an approver approved a credit or debit request, the customer's transaction description (shown in their wallet history and in the transaction email) included the internal request number and the support agent's name. It now shows only the reason the agent gave; the request number and the agent are recorded with the transaction for staff instead.
+* Change - Approval emails now go to every shop manager and administrator, including anyone who becomes one later, except those an administrator unticks under Axfit Wallet → Staff → Approval emails. Previously a recipient list saved by an administrator left out anyone added afterwards until someone remembered to tick them. A list saved on 1.10.0 is converted automatically and keeps the same people unticked.
+* New - Axfit Wallet → Staff → Levels now starts with a table showing exactly what each level, a shop manager and an administrator can do, including each level's goodwill credit limits.
 
 = v1.10.0 =
 * New - Approval requests. Anything that takes money out of a customer's wallet is no longer something a support agent can do directly: a debit, logging a withdrawal for a customer, or a credit above the agent's own limit is sent as a request instead (Axfit Wallet → My Requests → New request, or the "Request a withdrawal for a customer" button on the Withdrawals screen). Nothing in the customer's wallet changes until a shop manager or administrator approves it under Axfit Wallet → Approvals; it is then carried out once, in the approver's name, through the same code as their own actions. If it can no longer be carried out (for example the customer's balance is now too low for a debit) it is marked as failed with the reason and nothing changes. A request stays open until an approver approves or rejects it, or the agent cancels it. Bank details in a withdrawal request are stored encrypted.

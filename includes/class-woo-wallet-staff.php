@@ -698,6 +698,7 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 			?>
 			<p class="description" style="max-width:820px;">
 				<?php esc_html_e( 'Every agent can view wallets, transactions and withdrawal requests, and send requests for approval. Their level decides what else they can do. Leave the personal limits empty to use the level\'s limits. Shop managers and administrators are not listed: they can do everything without a limit.', 'woo-wallet' ); ?>
+				<a href="<?php echo esc_url( add_query_arg( array( 'page' => 'woo-wallet-staff', 'tab' => 'levels' ), admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'See what each level can do', 'woo-wallet' ); ?></a>
 			</p>
 			<table class="widefat striped" style="max-width:1100px;">
 				<thead>
@@ -783,9 +784,103 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 		}
 
 		/**
+		 * What each level — and a shop manager and administrator — can do,
+		 * side by side.
+		 */
+		private function render_levels_matrix() {
+			$levels = self::get_levels();
+			$yes    = '<span class="dashicons dashicons-yes" style="color:#008a20;" aria-label="' . esc_attr__( 'Yes', 'woo-wallet' ) . '"></span>';
+			$no     = '<span class="dashicons dashicons-no-alt" style="color:#b32d2e;" aria-label="' . esc_attr__( 'No', 'woo-wallet' ) . '"></span>';
+			$ask    = '<span class="description">' . esc_html__( 'By approval request', 'woo-wallet' ) . '</span>';
+			$cell   = function ( $level, $cap, $no_text = '' ) use ( $yes, $no ) {
+				if ( in_array( $cap, $level['caps'], true ) ) {
+					return $yes;
+				}
+				return '' !== $no_text ? '<span class="description">' . esc_html( $no_text ) . '</span>' : $no;
+			};
+			$rows = array(
+				array(
+					'label'   => __( 'View wallets, transactions and withdrawal requests', 'woo-wallet' ),
+					'levels'  => array_fill_keys( array_keys( $levels ), $yes ),
+					'manager' => $yes,
+					'admin'   => $yes,
+				),
+				array(
+					'label'   => __( 'Send requests for approval', 'woo-wallet' ),
+					'levels'  => array_fill_keys( array_keys( $levels ), $yes ),
+					'manager' => '<span class="description">' . esc_html__( 'Not needed', 'woo-wallet' ) . '</span>',
+					'admin'   => '<span class="description">' . esc_html__( 'Not needed', 'woo-wallet' ) . '</span>',
+				),
+				array( 'label' => __( 'Add notes to withdrawal requests', 'woo-wallet' ), 'cap' => self::CAP_ADD_NOTES ),
+				array( 'label' => __( 'Goodwill credit', 'woo-wallet' ), 'cap' => self::CAP_GOODWILL_CREDIT, 'limits' => true ),
+				array( 'label' => __( 'Credit above the limit, or debit a wallet', 'woo-wallet' ), 'agents' => $ask, 'manager' => esc_html__( 'Yes, no limit', 'woo-wallet' ), 'admin' => esc_html__( 'Yes, no limit', 'woo-wallet' ) ),
+				array( 'label' => __( 'Log a withdrawal for a customer', 'woo-wallet' ), 'agents' => $ask ),
+				array( 'label' => __( 'Bank account numbers and IBANs', 'woo-wallet' ), 'cap' => self::CAP_VIEW_BANK_DETAILS, 'no_text' => __( 'Last 4 digits only', 'woo-wallet' ) ),
+				array( 'label' => __( 'Open transfer receipts', 'woo-wallet' ), 'cap' => self::CAP_VIEW_RECEIPTS ),
+				array( 'label' => __( 'Mark withdrawals paid or reject them', 'woo-wallet' ), 'agents' => $no ),
+				array( 'label' => __( 'Approve requests', 'woo-wallet' ), 'agents' => $no ),
+				array( 'label' => __( 'Export to CSV', 'woo-wallet' ), 'agents' => $no ),
+				array( 'label' => __( 'Manage support agents and levels', 'woo-wallet' ), 'agents' => $no ),
+				array( 'label' => __( 'Choose who gets approval emails', 'woo-wallet' ), 'agents' => $no, 'manager' => $no ),
+				array( 'label' => __( 'Wallet settings', 'woo-wallet' ), 'agents' => $no, 'manager' => $no ),
+			);
+			?>
+			<table class="widefat striped" style="max-width:1100px;margin-bottom:24px;">
+				<thead>
+					<tr>
+						<th></th>
+						<?php foreach ( $levels as $level ) : ?>
+							<th><?php echo esc_html( $level['name'] ); ?></th>
+						<?php endforeach; ?>
+						<th><?php esc_html_e( 'Shop manager', 'woo-wallet' ); ?></th>
+						<th><?php esc_html_e( 'Administrator', 'woo-wallet' ); ?></th>
+					</tr>
+				</thead>
+				<tbody>
+					<?php foreach ( $rows as $row ) : ?>
+						<tr>
+							<td><?php echo esc_html( $row['label'] ); ?></td>
+							<?php foreach ( $levels as $key => $level ) : ?>
+								<td>
+									<?php
+									if ( isset( $row['levels'] ) ) {
+										$out = $row['levels'][ $key ];
+									} elseif ( isset( $row['cap'] ) ) {
+										$out = $cell( $level, $row['cap'], $row['no_text'] ?? '' );
+										if ( ! empty( $row['limits'] ) && in_array( $row['cap'], $level['caps'], true ) ) {
+											$out .= $level['daily'] > 0
+												? '<br /><span class="description">' . esc_html(
+													sprintf(
+														/* translators: 1: per-credit limit, 2: daily limit */
+														__( 'Up to %1$s at a time, %2$s a day', 'woo-wallet' ),
+														wp_strip_all_tags( wc_price( $level['per_credit'] ) ),
+														wp_strip_all_tags( wc_price( $level['daily'] ) )
+													)
+												) . '</span>'
+												: '<br /><span class="description" style="color:#b32d2e;">' . esc_html__( 'No limit set yet — cannot credit', 'woo-wallet' ) . '</span>';
+										}
+									} else {
+										$out = $row['agents'];
+									}
+									echo wp_kses_post( $out );
+									?>
+								</td>
+							<?php endforeach; ?>
+							<td><?php echo wp_kses_post( $row['manager'] ?? $yes ); ?></td>
+							<td><?php echo wp_kses_post( $row['admin'] ?? $yes ); ?></td>
+						</tr>
+					<?php endforeach; ?>
+				</tbody>
+			</table>
+			<p class="description" style="max-width:1100px;margin-top:-16px;margin-bottom:24px;"><?php esc_html_e( 'An agent\'s personal limits, if set on the Support agents tab, replace their level\'s goodwill credit limits.', 'woo-wallet' ); ?></p>
+			<?php
+		}
+
+		/**
 		 * The levels tab.
 		 */
 		private function render_levels_tab() {
+			$this->render_levels_matrix();
 			?>
 			<p class="description" style="max-width:820px;">
 				<?php esc_html_e( 'Debits, withdrawals and credit above these limits are never done by an agent directly: they send a request for approval instead.', 'woo-wallet' ); ?>
@@ -829,7 +924,7 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 			$chosen = Woo_Wallet_Approvals::chosen_recipient_ids();
 			?>
 			<p class="description" style="max-width:820px;">
-				<?php esc_html_e( 'Who gets an email when a support agent sends a request for approval. Anyone chosen can pause their own emails from the Approvals screen, for example while on leave. Everyone listed here can approve requests whether or not they get the email.', 'woo-wallet' ); ?>
+				<?php esc_html_e( 'Who gets an email when a support agent sends a request for approval. Every shop manager and administrator gets them, including anyone who becomes one later, unless you untick them here. Anyone ticked can pause their own emails from the Approvals screen, for example while on leave. Everyone listed can approve requests whether or not they get the email.', 'woo-wallet' ); ?>
 			</p>
 			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
 				<input type="hidden" name="action" value="woo_wallet_approval_recipients" />
