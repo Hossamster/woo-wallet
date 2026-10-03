@@ -76,6 +76,10 @@ class Woo_Wallet_Install {
 		'1.10.0' => array(
 			'woo_wallet_update_1100_approval_requests',
 		),
+		'1.11.0' => array(
+			'woo_wallet_update_1110_audit_log',
+			'woo_wallet_update_1110_widen_iban',
+		),
 	);
 	/**
 	 * Plugin install
@@ -158,6 +162,7 @@ class Woo_Wallet_Install {
 		$tables .= "\n" . self::get_withdrawals_schema();
 		$tables .= "\n" . self::get_withdrawal_notes_schema();
 		$tables .= "\n" . self::get_approval_requests_schema();
+		$tables .= "\n" . self::get_audit_log_schema();
 		return $tables;
 	}
 
@@ -254,7 +259,7 @@ class Woo_Wallet_Install {
             bank_name varchar(191 ) NOT NULL DEFAULT '',
             beneficiary_name varchar(191 ) NOT NULL DEFAULT '',
             account_number varchar(191 ) NOT NULL DEFAULT '',
-            iban varchar(64 ) NULL,
+            iban varchar(191 ) NULL,
             phone varchar(32 ) NOT NULL DEFAULT '',
             reference_no varchar(191 ) NOT NULL DEFAULT '',
             receipt_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
@@ -343,6 +348,36 @@ class Woo_Wallet_Install {
             PRIMARY KEY  (id ),
             KEY status (status ),
             KEY requested_by (requested_by )
+        ) ENGINE=InnoDB $collate;";
+	}
+
+	/**
+	 * Audit log of sensitive staff actions (see Woo_Wallet_Audit).
+	 *
+	 * @global object $wpdb
+	 * @return string
+	 */
+	public static function get_audit_log_schema() {
+		global $wpdb;
+		$collate = '';
+
+		if ( $wpdb->has_cap( 'collation' ) ) {
+			$collate = $wpdb->get_charset_collate();
+		}
+
+		return "CREATE TABLE {$wpdb->base_prefix}woo_wallet_audit_log (
+            id BIGINT UNSIGNED NOT NULL auto_increment,
+            event varchar(50 ) NOT NULL DEFAULT '',
+            actor_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            customer_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            object_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            amount DECIMAL( 16,8 ) NOT NULL DEFAULT 0,
+            details longtext NULL,
+            date_created datetime NOT NULL,
+            PRIMARY KEY  (id ),
+            KEY event (event ),
+            KEY date_created (date_created ),
+            KEY actor_id (actor_id )
         ) ENGINE=InnoDB $collate;";
 	}
 

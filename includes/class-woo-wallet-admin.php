@@ -1098,7 +1098,10 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 				} else {
 					$amount  = apply_filters( 'woo_wallet_addjust_balance_amount', number_format( $amount, wc_get_price_decimals(), '.', '' ), $user_id );
 					$balance = woo_wallet()->wallet->get_wallet_balance( $user_id, 'edit' );
-					$allowed = Woo_Wallet_Staff::authorize_adjustment( $payment_type, $amount, $user_id );
+					$allowed = Woo_Wallet_Staff::authorize_adjustment( $payment_type, $amount, $user_id, 0, $description );
+					if ( ! is_wp_error( $allowed ) ) {
+						$allowed = Woo_Wallet_Staff::check_large_amount( (float) $amount, (float) $amount, Woo_Wallet_Staff::submitted_confirmation() );
+					}
 					if ( is_wp_error( $allowed ) ) {
 						$response = array(
 							'type'    => 'error',
@@ -1111,8 +1114,14 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 							'message' => sprintf( __( '%s has insufficient balance for debit.', 'woo-wallet' ), $user->user_login ),
 						);
 					} elseif ( 'debit' === $payment_type ) {
-						$transaction_id = woo_wallet()->wallet->debit( $user_id, $amount, $description );
-						if ( $transaction_id ) {
+						$transaction_id = Woo_Wallet_Staff::adjust( 'debit', $user_id, $amount, $description );
+						if ( is_wp_error( $transaction_id ) ) {
+							$response       = array(
+								'type'    => 'error',
+								'message' => $transaction_id->get_error_message(),
+							);
+							$transaction_id = null;
+						} elseif ( $transaction_id ) {
 							do_action( 'woo_wallet_admin_adjust_balance', $transaction_id );
 							$response = array(
 								'type'    => 'success',
@@ -1241,7 +1250,8 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 							'percent' => __( 'Percentage', 'woo-wallet' ),
 							'fixed'   => __( 'Fixed', 'woo-wallet' ),
 						),
-						'value'       => get_post_meta( $post->ID, '_cashback_type', true ),
+						'value'             => get_post_meta( $post->ID, '_cashback_type', true ),
+						'custom_attributes' => Woo_Wallet_Staff::cashback_field_attributes(),
 					)
 				);
 				woocommerce_wp_text_input(
@@ -1249,12 +1259,13 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 						'id'                => 'wcwp_cashback_amount',
 						'type'              => 'number',
 						'data_type'         => 'decimal',
-						'custom_attributes' => array( 'step' => '0.01' ),
+						'custom_attributes' => Woo_Wallet_Staff::cashback_field_attributes( array( 'step' => '0.01' ) ),
 						'label'             => __( 'Cashback Amount', 'woo-wallet' ),
 						'description'       => __( 'Enter cashback amount', 'woo-wallet' ),
 						'value'             => get_post_meta( $post->ID, '_cashback_amount', true ),
 					)
 				);
+				echo wp_kses_post( Woo_Wallet_Staff::cashback_read_only_note() );
 				do_action( 'after_wallet_cashback_product_data' );
 				?>
 			</div>
@@ -1293,8 +1304,9 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 						'percent' => __( 'Percentage', 'woo-wallet' ),
 						'fixed'   => __( 'Fixed', 'woo-wallet' ),
 					),
-					'value'         => get_post_meta( $variation->ID, '_cashback_type', true ),
-					'wrapper_class' => 'form-row form-row-first',
+					'value'             => get_post_meta( $variation->ID, '_cashback_type', true ),
+					'wrapper_class'     => 'form-row form-row-first',
+					'custom_attributes' => Woo_Wallet_Staff::cashback_field_attributes(),
 				)
 			);
 			woocommerce_wp_text_input(
@@ -1303,9 +1315,11 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 					'name'              => 'variable_cashback_amount[' . $loop . ']',
 					'type'              => 'number',
 					'data_type'         => 'decimal',
-					'custom_attributes' => array(
-						'step' => '1',
-						'min'  => '0',
+					'custom_attributes' => Woo_Wallet_Staff::cashback_field_attributes(
+						array(
+							'step' => '1',
+							'min'  => '0',
+						)
 					),
 					'label'             => __( 'Cashback Amount', 'woo-wallet' ),
 					'value'             => get_post_meta( $variation->ID, '_cashback_amount', true ),
@@ -1435,14 +1449,15 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 			?>
 			<div class="form-field term-display-type-wrap">
 				<label for="woo_product_cat_cashback_type"><?php esc_html_e( 'Cashback type', 'woo-wallet' ); ?></label>
-				<select name="woo_product_cat_cashback_type" id="woo_product_cat_cashback_type">
+				<select name="woo_product_cat_cashback_type" id="woo_product_cat_cashback_type" <?php echo Woo_Wallet_Staff::can_change_cashback() ? '' : 'disabled'; ?>>
 					<option value="percent"><?php esc_html_e( 'Percentage', 'woo-wallet' ); ?></option>
 					<option value="fixed"><?php esc_html_e( 'Fixed', 'woo-wallet' ); ?></option>
 				</select>
 			</div>
 			<div class="form-field term-display-type-wrap">
 				<label for="woo_product_cat_cashback_amount"><?php esc_html_e( 'Cashback Amount', 'woo-wallet' ); ?></label>
-				<input type="number" step="0.01" name="woo_product_cat_cashback_amount" id="woo_product_cat_cashback_amount" value="" placeholder="">
+				<input type="number" step="0.01" name="woo_product_cat_cashback_amount" id="woo_product_cat_cashback_amount" value="" placeholder="" <?php echo Woo_Wallet_Staff::can_change_cashback() ? '' : 'disabled'; ?>>
+				<?php echo wp_kses_post( Woo_Wallet_Staff::cashback_read_only_note() ); ?>
 			</div>
 			<?php
 		}
@@ -1459,7 +1474,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 			<tr class="form-field">
 				<th scope="row" valign="top"><?php esc_html_e( 'Cashback type', 'woo-wallet' ); ?></th>
 				<td>
-					<select name="woo_product_cat_cashback_type" id="woo_product_cat_cashback_type">
+					<select name="woo_product_cat_cashback_type" id="woo_product_cat_cashback_type" <?php echo Woo_Wallet_Staff::can_change_cashback() ? '' : 'disabled'; ?>>
 						<option value="percent" <?php selected( $cashback_type, 'percent' ); ?>><?php esc_html_e( 'Percentage', 'woo-wallet' ); ?></option>
 						<option value="fixed" <?php selected( $cashback_type, 'fixed' ); ?>><?php esc_html_e( 'Fixed', 'woo-wallet' ); ?></option>
 					</select>
@@ -1467,7 +1482,7 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 			</tr>
 			<tr class="form-field">
 				<th scope="row" valign="top"><?php esc_html_e( 'Cashback Amount', 'woo-wallet' ); ?></th>
-				<td><input type="number" step="0.01" name="woo_product_cat_cashback_amount" id="woo_product_cat_cashback_amount" value="<?php echo esc_attr( $cashback_amount ); ?>" placeholder=""></td>
+				<td><input type="number" step="0.01" name="woo_product_cat_cashback_amount" id="woo_product_cat_cashback_amount" value="<?php echo esc_attr( $cashback_amount ); ?>" placeholder="" <?php echo Woo_Wallet_Staff::can_change_cashback() ? '' : 'disabled'; ?>><?php echo wp_kses_post( Woo_Wallet_Staff::cashback_read_only_note() ); ?></td>
 			</tr>
 			<?php
 		}

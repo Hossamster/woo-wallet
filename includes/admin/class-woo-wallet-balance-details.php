@@ -486,6 +486,15 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 			// The same form arriving more than once (a double click, or the
 			// browser re-sending the POST) must only move money once.
 			$is_money_action = in_array( $this->current_action(), array( 'credit', 'debit' ), true );
+			if ( $is_money_action ) {
+				$bulk_ids    = isset( $_REQUEST['users'] ) ? array_filter( array_map( 'intval', (array) $_REQUEST['users'] ) ) : array();
+				$bulk_amount = isset( $_POST['amount'] ) ? floatval( sanitize_text_field( wp_unslash( $_POST['amount'] ) ) ) : 0;
+				$confirmed   = Woo_Wallet_Staff::check_large_amount( $bulk_amount * count( $bulk_ids ), $bulk_amount, Woo_Wallet_Staff::submitted_confirmation(), count( $bulk_ids ) );
+				if ( is_wp_error( $confirmed ) ) {
+					set_transient( 'woo_wallet_staff_error_' . get_current_user_id(), array( $confirmed->get_error_message() ), 30 );
+					return;
+				}
+			}
 			if ( $is_money_action && ! Woo_Wallet_Staff::claim_submitted_form_token() ) {
 				return;
 			}
@@ -514,14 +523,21 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 				$amount      = isset( $_POST['amount'] ) ? floatval( sanitize_text_field( wp_unslash( $_POST['amount'] ) ) ) : 0;
 				$description = isset( $_POST['description'] ) ? sanitize_textarea_field( wp_unslash( $_POST['description'] ) ) : '';
 				if ( $amount && $debit_ids ) {
+					$errors = array();
 					foreach ( $debit_ids as $id ) {
-						woo_wallet()->wallet->debit( $id, $amount, $description, array( 'category' => 'adjustment' ) );
+						$result = Woo_Wallet_Staff::adjust( 'debit', $id, $amount, $description, array( 'category' => 'adjustment' ) );
+						if ( is_wp_error( $result ) ) {
+							$errors[] = $result->get_error_message();
+						}
+					}
+					if ( $errors ) {
+						set_transient( 'woo_wallet_staff_error_' . get_current_user_id(), array_unique( $errors ), 30 );
 					}
 				}
 				header( 'Refresh: 0' );
 			}
 
-			if ( 'delete_log' === $this->current_action() && current_user_can( Woo_Wallet_Staff::CAP_ADJUST_BALANCE ) ) {
+			if ( 'delete_log' === $this->current_action() && current_user_can( Woo_Wallet_Staff::CAP_DELETE_LOGS ) ) {
 				$delete_ids       = isset( $_REQUEST['users'] ) ? array_map( 'intval', (array) $_REQUEST['users'] ) : array();
 				$delete_mode      = isset( $_POST['delete_mode'] ) && 'hard' === $_POST['delete_mode'] ? 'hard' : 'soft';
 				$balance_handling = isset( $_POST['balance_handling'] ) && 'wipe' === $_POST['balance_handling'] ? 'wipe' : 'keep';
@@ -555,8 +571,12 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 				'delete_log' => __( 'Delete Log', 'woo-wallet' ),
 			)
 		);
+		if ( ! current_user_can( Woo_Wallet_Staff::CAP_DELETE_LOGS ) ) {
+			// Deleting a customer's log would erase the record of a manual credit.
+			unset( $actions['delete_log'] );
+		}
 		if ( ! current_user_can( Woo_Wallet_Staff::CAP_ADJUST_BALANCE ) ) {
-			unset( $actions['debit'], $actions['delete_log'] );
+			unset( $actions['debit'] );
 			if ( ! Woo_Wallet_Staff::can_adjust() ) {
 				unset( $actions['credit'] );
 			}
@@ -627,6 +647,7 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 				// above), so scope to the list form directly — the admin body class
 				// is derived from the translated menu title and is not stable.
 				var $listForm = $('#posts-filter');
+				var wwLargeThreshold = <?php echo wp_json_encode( Woo_Wallet_Staff::large_threshold() ); ?>;
 
 				// Pick the action that's actually selected — bulkactions dropdowns
 				// duplicate the control above + below the table, so either one may
@@ -705,15 +726,45 @@ class Woo_Wallet_Balance_Details extends WP_List_Table {
 					if ($listForm.data('wooWalletSubmitting')) {
 						return false;
 					}
+					var count   = $listForm.find('input[name="users[]"]:checked').length;
+					var total   = amount * count;
+					var $large  = $modal.find('.woo-wallet-large-confirm');
+					if (wwLargeThreshold > 0 && total > wwLargeThreshold) {
+						if (!$large.is(':visible')) {
+							$large.find('.woo-wallet-large-warning').text(
+								'<?php echo esc_js( __( 'Large total:', 'woo-wallet' ) ); ?> ' + amount + ' × ' + count + ' = ' + total.toFixed(2) + ' (<?php echo esc_js( __( 'over', 'woo-wallet' ) ); ?> ' + wwLargeThreshold + ')'
+							);
+							$large.show();
+							$large.find('input').focus();
+							return false;
+						}
+						if (Math.abs(parseFloat($large.find('input').val()) - amount) > 0.0049) {
+							$large.find('input').focus();
+							return false;
+						}
+						$listForm.find('input[name="confirm_amount"]').remove();
+						$listForm.append($('<input>').attr({ type: 'hidden', name: 'confirm_amount', value: amount }));
+					}
 					$listForm.data('wooWalletSubmitting', true);
 					$listForm.data('wooWalletCreditDebitConfirmed', true);
 					$('.wc-backbone-modal-backdrop.modal-close').trigger('click');
 					$listForm[0].submit();
 				});
+				// A large amount needs typing twice (enforced on the server too).
+				$(document).on('input change', '.woo-wallet-edit-balance [name="balance_amount"]', function () {
+					var amount = parseFloat($(this).val());
+					$(this).closest('form').find('.woo-wallet-large-confirm').toggle(wwLargeThreshold > 0 && amount > wwLargeThreshold);
+				});
 				// One submission per click: a second click while the first is
 				// still on its way would otherwise send the form again.
 				$(document).on('submit', '.woo-wallet-edit-balance form', function () {
-					var $form = $(this);
+					var $form   = $(this);
+					var $large  = $form.find('.woo-wallet-large-confirm');
+					var amount  = parseFloat($form.find('[name="balance_amount"]').val());
+					if (wwLargeThreshold > 0 && amount > wwLargeThreshold && Math.abs(parseFloat($large.find('input').val()) - amount) > 0.0049) {
+						$large.show().find('input').focus();
+						return false;
+					}
 					if ($form.data('wooWalletSubmitting')) {
 						return false;
 					}

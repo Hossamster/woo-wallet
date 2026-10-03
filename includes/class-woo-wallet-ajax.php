@@ -527,6 +527,7 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 				wp_send_json_success(
 					array(
 						'user_id'         => $user_id,
+						'display_name'    => get_userdata( $user_id ) ? get_userdata( $user_id )->display_name : '',
 						'current_balance' => woo_wallet()->wallet->get_wallet_balance( $user_id ),
 					)
 				);

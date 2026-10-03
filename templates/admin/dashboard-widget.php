@@ -403,13 +403,23 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 
 			$btn.prop('disabled', true);
 
+			var send = function (confirmAmount) {
 			$.post(ajaxurl, {
 				action: 'woo_wallet_dashboard_widget_quick_credit',
 				user: user,
 				amount: amount,
 				note: note,
+				confirm_amount: confirmAmount,
 				security: $widget.find('.twdw-body').data('security')
 			}).done(function (response) {
+				if (response && !response.success && response.data && 'woo_wallet_confirmation_required' === response.data.code && '' === confirmAmount) {
+					// A large amount: type it again (the server checks it too).
+					var typed = window.prompt(response.data.message);
+					if (null !== typed && '' !== $.trim(typed)) {
+						send($.trim(typed));
+						return;
+					}
+				}
 				if (response && response.success) {
 					$('.wc-backbone-modal-backdrop.modal-close').trigger('click');
 					var $notice = $widget.find('#woo-wallet-quick-action-notice');
@@ -427,6 +437,8 @@ $nonce         = wp_create_nonce( Woo_Wallet_Dashboard_Widget::AJAX_NONCE_ACTION
 			}).always(function () {
 				$btn.prop('disabled', false);
 			});
+			};
+			send('');
 		});
 	});
 </script>

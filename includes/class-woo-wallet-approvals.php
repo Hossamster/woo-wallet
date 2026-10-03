@@ -211,7 +211,10 @@ if ( ! class_exists( 'Woo_Wallet_Approvals' ) ) {
 			$payload = is_array( $payload ) ? $payload : array();
 			foreach ( array( 'account_number', 'iban' ) as $key ) {
 				if ( isset( $payload[ $key ] ) ) {
-					$payload[ $key ] = (string) Woo_Wallet_Security::decrypt( $payload[ $key ] );
+					if ( Woo_Wallet_Security::is_unreadable( $payload[ $key ] ) ) {
+						$payload['_unreadable'] = true;
+					}
+					$payload[ $key ] = (string) Woo_Wallet_Security::reveal( $payload[ $key ] );
 				}
 			}
 			return $payload;
@@ -342,6 +345,9 @@ if ( ! class_exists( 'Woo_Wallet_Approvals' ) ) {
 
 			if ( self::TYPE_WITHDRAWAL === $row->type ) {
 				$details = self::details( $row );
+				if ( ! empty( $details['_unreadable'] ) ) {
+					return new WP_Error( 'woo_wallet_approval_unreadable', __( 'The bank details in this request cannot be read because the encryption key has changed. Restore the original key, or reject this request and ask for a new one.', 'woo-wallet' ) );
+				}
 				$note    = $row->reason ? $origin . ': ' . $row->reason : $origin;
 				$result  = Woo_Wallet_Withdrawal::admin_create(
 					(int) $row->customer_id,

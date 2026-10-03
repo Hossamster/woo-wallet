@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.10.1
+Stable tag: 1.11.0
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,21 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.11.0 =
+* Security - Nobody can credit or debit their own wallet by hand any more — not a support agent, not a shop manager — from any screen or the REST API. An administrator still can (a store may have only one), but must give a reason, the transaction is flagged, and every other administrator is emailed at once.
+* Security - Deleting or editing wallet transaction history (the "Delete Log" action, and the REST delete, edit and purge routes) is now administrator-only and is logged and emailed to the other administrators. A shop manager could previously credit a wallet and then erase the record of it.
+* Security - Product, variation and category cashback can only be changed by an administrator, however the change arrives (the product screen, a category, a CSV import, the REST API, a product object). Shop managers see the fields read-only. Every change is logged with the old and new value. Marketplace vendors can still set cashback on their own products.
+* Security - Every manual credit or debit is now recorded as an "Adjustment" (the Edit Balance dialog used to record "Other"), and every way of making one — the Wallet Users screen, bulk actions, the dashboard Quick Credit, and both REST APIs — goes through the same permission checks.
+* New - Daily staff digest, emailed to administrators every morning (WooCommerce → Settings → Emails → "Wallet daily staff digest"): every manual credit and debit of the last 24 hours with totals per staff member, sensitive actions, and a "needs a second look" section — a staff member adjusting their own wallet, crediting an account created the same day, crediting a customer whose email or phone matches their own (Gmail aliases and phone formats included), or making ten or more adjustments within an hour. It is sent even when nothing happened, so a missing email is noticeable.
+* New - Axfit Wallet → Staff → Activity (administrators): the same report for the last 24 hours, 7, 30 or 90 days.
+* New - When reviewing a withdrawal, a warning shows how much of the customer's balance staff credited by hand in the last 7 days, and by whom — credit added to an accomplice's wallet only leaves the store when it is withdrawn.
+* New - Wallet Accountant role (Axfit Wallet → Staff → Accountants): reviews withdrawals with full bank details and receipts, marks them paid or rejects them, adds notes and exports — without being able to credit or debit wallets, or see products, orders or settings.
+* New - Large-adjustment safeguard (Axfit Wallet → Staff → Safeguards): above a threshold you set, a manual credit or debit — including the total of a bulk action, and from shop managers and administrators too — needs the amount typed a second time. Enforced on the server; the REST API takes it as `confirm_amount`.
+* New - Optional dedicated encryption key: define WOO_WALLET_ENCRYPTION_KEY in wp-config.php and new bank details are encrypted with it instead of the WordPress salts, which hosts and security plugins regenerate routinely. A "Re-encrypt" button moves existing data to it.
+* New - The plugin now notices when the encryption key has changed (a moved site, regenerated salts, a removed key): administrators get a warning on every admin screen, and bank details that can no longer be read show as "[Unreadable — the encryption key has changed]" instead of an enc:v1:… string. An approval request whose bank details cannot be read is not carried out.
+* New - "Encrypt bank details" can now be switched on under Axfit Wallet → Staff → Safeguards (it was only available as a code filter), with a button to encrypt existing records.
+* Fix - With bank-detail encryption on, every withdrawal with an IBAN was refused: an encrypted IBAN does not fit the old 64-character column. The column is widened on upgrade.
 
 = v1.10.1 =
 * Fix - When an approver approved a credit or debit request, the customer's transaction description (shown in their wallet history and in the transaction email) included the internal request number and the support agent's name. It now shows only the reason the agent gave; the request number and the agent are recorded with the transaction for staff instead.

@@ -535,3 +535,30 @@ function woo_wallet_update_1100_approval_requests() {
 	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 	dbDelta( Woo_Wallet_Install::get_approval_requests_schema() );
 }
+
+/**
+ * 1.11.0: create `woo_wallet_audit_log` — sensitive staff actions
+ * (Woo_Wallet_Audit).
+ *
+ * @return void
+ */
+function woo_wallet_update_1110_audit_log() {
+	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+	dbDelta( Woo_Wallet_Install::get_audit_log_schema() );
+}
+
+/**
+ * 1.11.0: widen `woo_wallet_withdrawals.iban` from varchar(64) to
+ * varchar(191). An encrypted IBAN is around 115 characters, so with bank
+ * detail encryption on, every withdrawal with an IBAN was refused at insert.
+ *
+ * @return void
+ */
+function woo_wallet_update_1110_widen_iban() {
+	global $wpdb;
+	$table_name = $wpdb->base_prefix . 'woo_wallet_withdrawals';
+	if ( $table_name !== $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		return;
+	}
+	$wpdb->query( "ALTER TABLE `{$table_name}` MODIFY `iban` varchar(191) NULL" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+}

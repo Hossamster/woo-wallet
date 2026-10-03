@@ -176,11 +176,22 @@ if ( ! class_exists( 'Woo_Wallet_Dashboard_Widget' ) ) {
 				wp_send_json_error( array( 'message' => __( 'Enter an amount greater than zero.', 'woo-wallet' ) ) );
 			}
 
-			$details        = '' !== $note ? $note : __( 'Quick credit from wallet dashboard widget', 'woo-wallet' );
-			$transaction_id = woo_wallet()->wallet->credit( $user->ID, $amount, $details, array( 'category' => 'adjustment' ) );
+			$confirmed = Woo_Wallet_Staff::check_large_amount( $amount, $amount, Woo_Wallet_Staff::submitted_confirmation() );
+			if ( is_wp_error( $confirmed ) ) {
+				wp_send_json_error(
+					array(
+						'code'    => $confirmed->get_error_code(),
+						/* translators: 1: the server's message, 2: customer name */
+						'message' => sprintf( __( '%1$s Customer: %2$s', 'woo-wallet' ), $confirmed->get_error_message(), $user->display_name ),
+					)
+				);
+			}
 
-			if ( ! $transaction_id ) {
-				wp_send_json_error( array( 'message' => __( 'Could not credit this wallet. Please try again.', 'woo-wallet' ) ) );
+			$details        = '' !== $note ? $note : __( 'Quick credit from wallet dashboard widget', 'woo-wallet' );
+			$transaction_id = Woo_Wallet_Staff::adjust( 'credit', $user->ID, $amount, $details, array( 'category' => 'adjustment' ) );
+
+			if ( is_wp_error( $transaction_id ) ) {
+				wp_send_json_error( array( 'message' => $transaction_id->get_error_message() ) );
 			}
 
 			wp_send_json_success(

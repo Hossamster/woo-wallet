@@ -331,7 +331,15 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 
 			// Decrypt stored fields if encrypted at rest.
 			$account_number = class_exists( 'Woo_Wallet_Security' ) ? Woo_Wallet_Security::decrypt( $row->account_number ) : $row->account_number;
+			// Unreadable after an encryption-key change: say nothing rather
+			// than send the customer a placeholder as if it were their number.
+			if ( class_exists( 'Woo_Wallet_Security' ) && Woo_Wallet_Security::unreadable_text() === $account_number ) {
+				$account_number = '';
+			}
 			$iban           = ( $row->iban && class_exists( 'Woo_Wallet_Security' ) ) ? Woo_Wallet_Security::decrypt( $row->iban ) : $row->iban;
+			if ( class_exists( 'Woo_Wallet_Security' ) && Woo_Wallet_Security::unreadable_text() === $iban ) {
+				$iban = '';
+			}
 
 			$mask_string = static function ( $val, $keep = 4 ) {
 				if ( ! is_string( $val ) || '' === $val ) {

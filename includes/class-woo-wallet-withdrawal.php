@@ -737,9 +737,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			global $wpdb;
 			$row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM ' . self::table() . ' WHERE id = %d', absint( $id ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			if ( $row && class_exists( 'Woo_Wallet_Security' ) ) {
-				$row->account_number = Woo_Wallet_Security::decrypt( $row->account_number );
+				$row->account_number = Woo_Wallet_Security::reveal( $row->account_number );
 				if ( ! empty( $row->iban ) ) {
-					$row->iban = Woo_Wallet_Security::decrypt( $row->iban );
+					$row->iban = Woo_Wallet_Security::reveal( $row->iban );
 				}
 			}
 			return $row;
@@ -907,9 +907,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			if ( ! empty( $results ) && class_exists( 'Woo_Wallet_Security' ) ) {
 				foreach ( $results as $row ) {
 					if ( is_object( $row ) ) {
-						$row->account_number = Woo_Wallet_Security::decrypt( $row->account_number );
+						$row->account_number = Woo_Wallet_Security::reveal( $row->account_number );
 						if ( ! empty( $row->iban ) ) {
-							$row->iban = Woo_Wallet_Security::decrypt( $row->iban );
+							$row->iban = Woo_Wallet_Security::reveal( $row->iban );
 						}
 					}
 				}
@@ -2066,6 +2066,49 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
+		 * Where the balance being withdrawn came from, when part of it was
+		 * credited by hand by staff in the last few days. Credit added to an
+		 * accomplice's wallet only leaves the store when it is withdrawn, so
+		 * this is the moment to catch it — whoever reviews the withdrawal sees
+		 * it without having to open any report.
+		 *
+		 * @param object $request Withdrawal row.
+		 */
+		public static function render_balance_sources( $request ) {
+			$reserved = 'pending' === $request->status || 'processing' === $request->status ? (float) $request->amount + (float) $request->charge : 0.0;
+			$sources  = Woo_Wallet_Audit::manual_credit_sources( (int) $request->user_id, 7, $reserved );
+			if ( $sources['total'] <= 0 ) {
+				return;
+			}
+			$names = array();
+			foreach ( $sources['by_staff'] as $staff_id => $total ) {
+				$staff   = get_userdata( $staff_id );
+				$names[] = ( $staff ? $staff->display_name : '#' . (int) $staff_id ) . ' (' . wp_strip_all_tags( wc_price( $total ) ) . ')';
+			}
+			$warn = $sources['share'] >= 50;
+			printf(
+				'<div class="notice %1$s inline" style="margin:16px 0;"><p><strong>%2$s</strong> %3$s</p></div>',
+				$warn ? 'notice-error' : 'notice-warning',
+				esc_html(
+					sprintf(
+						/* translators: 1: percentage, 2: amount, 3: days */
+						__( '%1$s%% of this customer\'s balance (%2$s) was credited by hand by staff in the last %3$d days.', 'woo-wallet' ),
+						number_format_i18n( $sources['share'], 0 ),
+						wp_strip_all_tags( wc_price( $sources['total'] ) ),
+						$sources['days']
+					)
+				),
+				esc_html(
+					sprintf(
+						/* translators: %s: staff names and amounts */
+						__( 'By: %s. Check those credits were genuine before paying this out.', 'woo-wallet' ),
+						implode( ', ', $names )
+					)
+				)
+			);
+		}
+
+		/**
 		 * The manual "log a withdrawal for a customer" form — for a customer
 		 * who phones/messages in rather than using the self-service tab.
 		 */
@@ -2277,6 +2320,12 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 						<td><?php echo esc_html( wc_string_to_datetime( $request->date_created )->date_i18n( wc_date_format() . ' ' . wc_time_format() ) ); ?></td>
 					</tr>
 				</table>
+
+				<?php
+				if ( in_array( $request->status, array( 'pending', 'processing' ), true ) && current_user_can( Woo_Wallet_Staff::CAP_PROCESS_WITHDRAWALS ) ) {
+					self::render_balance_sources( $request );
+				}
+				?>
 
 				<?php if ( ! current_user_can( Woo_Wallet_Staff::CAP_PROCESS_WITHDRAWALS ) ) : ?>
 					<?php // Read-only for support agents: no mark-paid, reject or recover. ?>

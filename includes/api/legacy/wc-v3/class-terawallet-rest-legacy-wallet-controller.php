@@ -413,12 +413,16 @@ class TeraWallet_REST_Transactions_Controller extends TeraWallet_REST_Controller
 		}
 		$note           = isset( $params['note'] ) ? $params['note'] : '';
 		$transaction_id = false;
-		if ( 'credit' === $params['type'] ) {
-			$transaction_id = woo_wallet()->wallet->credit( $user->ID, $params['amount'], $note );
-		} elseif ( 'debit' === $params['type'] ) {
-			$transaction_id = woo_wallet()->wallet->debit( $user->ID, $params['amount'], $note );
-		} else {
+		if ( ! in_array( $params['type'], array( 'credit', 'debit' ), true ) ) {
 			return new WP_Error( 'terawallet_rest_invalid_type', __( 'Invalid transaction type. Must be credit or debit.', 'woo-wallet' ), array( 'status' => 400 ) );
+		}
+		$confirmed = Woo_Wallet_Staff::check_large_amount( (float) $params['amount'], (float) $params['amount'], $params['confirm_amount'] ?? null );
+		if ( is_wp_error( $confirmed ) ) {
+			return new WP_Error( $confirmed->get_error_code(), $confirmed->get_error_message() . ' ' . __( 'Send the same amount again as confirm_amount.', 'woo-wallet' ), array( 'status' => 409 ) );
+		}
+		$transaction_id = Woo_Wallet_Staff::adjust( $params['type'], $user->ID, (float) $params['amount'], $note );
+		if ( is_wp_error( $transaction_id ) ) {
+			return new WP_Error( $transaction_id->get_error_code(), $transaction_id->get_error_message(), array( 'status' => 'woo_wallet_staff_adjust_failed' === $transaction_id->get_error_code() ? 500 : 403 ) );
 		}
 		if ( ! $transaction_id ) {
 			return new WP_Error( 'terawallet_rest_transaction_failed', __( 'Wallet transaction could not be recorded.', 'woo-wallet' ), array( 'status' => 500 ) );

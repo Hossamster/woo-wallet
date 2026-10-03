@@ -243,6 +243,9 @@ class TeraWallet_REST_Admin_Users_Controller extends TeraWallet_REST_Admin_Contr
 	}
 
 	public function purge_transactions( $request ) {
+		if ( ! current_user_can( Woo_Wallet_Staff::CAP_DELETE_LOGS ) ) {
+			return $this->error( 'terawallet_rest_history_forbidden', __( 'Only an administrator can delete or edit wallet transaction history.', 'woo-wallet' ), 403 );
+		}
 		$id   = (int) $request['id'];
 		$user = get_userdata( $id );
 		if ( ! $user ) {

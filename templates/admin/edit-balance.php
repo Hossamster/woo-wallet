@@ -52,6 +52,20 @@ if ( ! defined( 'ABSPATH' ) ) {
 									</td>
 								</tr>
 								<?php do_action( 'woo_wallet_after_payment_type_field' ); ?>
+								<?php if ( Woo_Wallet_Staff::large_threshold() > 0 ) : ?>
+								<tr class="woo-wallet-large-confirm" style="display:none;">
+									<th scope="row"><label for="woo-wallet-confirm-amount"><?php esc_html_e( 'Confirm amount', 'woo-wallet' ); ?></label></th>
+									<td>
+										<p style="margin:0 0 6px;padding:6px 10px;background:#fcf0f1;border-left:4px solid #d63638;color:#8a1f1f;font-weight:600;">
+											<?php
+											/* translators: 1: threshold, 2: customer name */
+											echo esc_html( sprintf( __( 'Large amount (over %1$s) for %2$s. Type it again to continue.', 'woo-wallet' ), wp_strip_all_tags( wc_price( Woo_Wallet_Staff::large_threshold() ) ), '{{ data.display_name }}' ) );
+											?>
+										</p>
+										<input type="number" step="any" id="woo-wallet-confirm-amount" name="<?php echo esc_attr( Woo_Wallet_Staff::CONFIRM_FIELD ); ?>" class="regular-text" autocomplete="off" />
+									</td>
+								</tr>
+								<?php endif; ?>
 								<tr>
 									<th scope="row"><label for="payment_description"><?php esc_html_e( 'Description', 'woo-wallet' ); ?></label></th>
 									<td>

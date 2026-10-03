@@ -56,10 +56,14 @@ shape philosophy as the customer ledger, plus `user_id`, `user`,
 Manually credit or debit a customer's wallet.
 
 **Body:** `user_id` (required), `type` (`credit` \| `debit`, required),
-`amount` (required, > 0), `currency` (optional), `note` (optional).
-Requires `Idempotency-Key`. Returns `201` with the created transaction, or
-`404` for an invalid `user_id`, `500` `terawallet_rest_transaction_failed`
-if the ledger write itself failed (e.g. insufficient balance on a debit).
+`amount` (required, > 0), `currency` (optional), `note` (optional),
+`confirm_amount` (required when the amount is above the large-adjustment
+threshold set under Axfit Wallet → Staff → Safeguards; must equal `amount`).
+Requires `Idempotency-Key`. Returns the created transaction, or
+`404` for an invalid `user_id`, `409` `woo_wallet_confirmation_required`
+when a large amount was not confirmed, `403` `woo_wallet_staff_self_credit`
+when the caller targets their own wallet (administrators may, with a `note`;
+every other administrator is emailed), or `500` if the ledger write failed.
 
 ### `GET /admin/transactions/{id}`
 
@@ -69,8 +73,14 @@ Single transaction by id, including its full meta rows.
 
 Edit the `details` note on an existing transaction. **Does not touch the
 balance** — admin metadata editing only. Body: `details` (string, required).
+**Administrators only** (`403` `terawallet_rest_history_forbidden` for a shop
+manager): rewriting history could hide a manual credit. Every edit is logged
+and emailed to the other administrators.
 
 ### `DELETE /admin/transactions/{id}?force=`
+
+**Administrators only**, logged and emailed to the other administrators, as
+for `PATCH` above.
 
 Soft-deletes (sets `deleted=1`) by default; `force=true` hard-deletes. Either
 way, **the balance is not automatically adjusted** — see
@@ -87,8 +97,13 @@ the first pass — a row still `in_progress` when the retry runs is reported
 as `{"ok": false, "in_progress": true}`, not as a failure.
 
 **Body (credit/debit):** `action` (`credit` \| `debit`), `user_ids`
-(array), `amount`, `currency` (optional), `note` (optional).
+(array), `amount`, `currency` (optional), `note` (optional),
+`confirm_amount` (required when `amount` × the number of users is above the
+large-adjustment threshold; must equal `amount`, the amount per user).
+A row the caller may not make (e.g. their own wallet) comes back
+`{"ok": false, "error": "..."}`.
 **Body (delete):** `action: "delete"`, `ids` (array), `force` (optional bool).
+Delete is administrators only.
 
 ```json
 { "action": "credit", "results": [
@@ -129,6 +144,8 @@ Just the multicurrency balance breakdown for one user (the same shape
 above).
 
 ### `POST /admin/users/{id}/transactions/purge`
+
+**Administrators only**, logged and emailed to the other administrators.
 
 Delete a user's transaction history. **Requires `Idempotency-Key`** — this
 is destructive and cannot be undone.

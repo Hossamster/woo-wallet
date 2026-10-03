@@ -43,6 +43,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 							<textarea id="woo-wallet-bulk-description" name="woo_wallet_bulk_description" rows="3"></textarea>
 							<p class="woo-wallet-modal-help"><?php esc_html_e( 'Shown on each transaction record. Leave empty to use the default description.', 'woo-wallet' ); ?></p>
 						</div>
+						<div class="woo-wallet-modal-field woo-wallet-large-confirm" style="display:none;">
+							<p class="woo-wallet-large-warning" style="margin:0;padding:6px 10px;background:#fcf0f1;border-left:4px solid #d63638;color:#8a1f1f;font-weight:600;"></p>
+							<label for="woo-wallet-bulk-confirm"><?php esc_html_e( 'Type the amount per customer again to confirm', 'woo-wallet' ); ?></label>
+							<input type="number" step="0.01" min="0" id="woo-wallet-bulk-confirm" autocomplete="off" />
+						</div>
 					</div>
 				</article>
 				<footer>

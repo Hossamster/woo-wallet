@@ -296,11 +296,14 @@ class TeraWallet_REST_Admin_Transactions_Controller extends TeraWallet_REST_Admi
 					$call_args['currency'] = strtoupper( $params['currency'] );
 				}
 				$note = isset( $params['note'] ) ? $params['note'] : '';
-				$txn_id = 'credit' === $params['type']
-					? woo_wallet()->wallet->credit( (int) $params['user_id'], (float) $params['amount'], $note, $call_args ?: null )
-					: woo_wallet()->wallet->debit( (int) $params['user_id'], (float) $params['amount'], $note, $call_args ?: null );
-				if ( ! $txn_id ) {
-					return $this->error( 'terawallet_rest_transaction_failed', __( 'Wallet transaction could not be recorded.', 'woo-wallet' ), 500 );
+				$confirmed = Woo_Wallet_Staff::check_large_amount( (float) $params['amount'], (float) $params['amount'], $params['confirm_amount'] ?? null );
+				if ( is_wp_error( $confirmed ) ) {
+					return $this->error( $confirmed->get_error_code(), $confirmed->get_error_message() . ' ' . __( 'Send the same amount again as confirm_amount.', 'woo-wallet' ), 409 );
+				}
+				$txn_id = Woo_Wallet_Staff::adjust( 'credit' === $params['type'] ? 'credit' : 'debit', (int) $params['user_id'], (float) $params['amount'], $note, $call_args );
+				if ( is_wp_error( $txn_id ) ) {
+					$status = 'woo_wallet_staff_adjust_failed' === $txn_id->get_error_code() ? 500 : 403;
+					return $this->error( $txn_id->get_error_code(), $txn_id->get_error_message(), $status );
 				}
 				$request['id'] = $txn_id;
 				return $this->get_item( $request );
@@ -310,6 +313,9 @@ class TeraWallet_REST_Admin_Transactions_Controller extends TeraWallet_REST_Admi
 	}
 
 	public function update_item( $request ) {
+		if ( ! current_user_can( Woo_Wallet_Staff::CAP_DELETE_LOGS ) ) {
+			return $this->history_forbidden();
+		}
 		$id      = (int) $request['id'];
 		$details = (string) $request['details'];
 		$ok      = woo_wallet()->wallet->update_transaction_details( $id, $details );
@@ -319,7 +325,20 @@ class TeraWallet_REST_Admin_Transactions_Controller extends TeraWallet_REST_Admi
 		return $this->get_item( $request );
 	}
 
+	/**
+		 * Deleting or rewriting transaction history is administrator-only: it
+		 * would let the person who made a manual credit erase the evidence.
+		 *
+		 * @return WP_Error
+		 */
+	protected function history_forbidden() {
+		return $this->error( 'terawallet_rest_history_forbidden', __( 'Only an administrator can delete or edit wallet transaction history.', 'woo-wallet' ), 403 );
+	}
+
 	public function delete_item( $request ) {
+		if ( ! current_user_can( Woo_Wallet_Staff::CAP_DELETE_LOGS ) ) {
+			return $this->history_forbidden();
+		}
 		$id   = (int) $request['id'];
 		$hard = ! empty( $request['force'] );
 		$ok   = woo_wallet()->wallet->delete_transaction( $id, $hard );
@@ -363,6 +382,10 @@ class TeraWallet_REST_Admin_Transactions_Controller extends TeraWallet_REST_Admi
 					if ( ! $user_ids || $amount <= 0 ) {
 						return $this->error( 'terawallet_rest_bulk_invalid', __( 'user_ids and amount are required.', 'woo-wallet' ), 400 );
 					}
+					$confirmed = Woo_Wallet_Staff::check_large_amount( $amount * count( $user_ids ), $amount, $params['confirm_amount'] ?? null, count( $user_ids ) );
+					if ( is_wp_error( $confirmed ) ) {
+						return $this->error( $confirmed->get_error_code(), $confirmed->get_error_message() . ' ' . __( 'Send the amount per customer again as confirm_amount.', 'woo-wallet' ), 409 );
+					}
 					$current_user = get_current_user_id();
 					// Per-row idempotency: a retry after a mid-loop process death
 					// must not re-credit users who already received the credit on
@@ -372,12 +395,15 @@ class TeraWallet_REST_Admin_Transactions_Controller extends TeraWallet_REST_Admi
 							$current_user,
 							'admin_txn_bulk_row:' . $action . ':' . $idem_key . ':' . $uid,
 							function () use ( $action, $uid, $amount, $note, $call_args ) {
-								$args   = $call_args ?: null;
-								$txn_id = 'credit' === $action
-									? woo_wallet()->wallet->credit( $uid, $amount, $note, $args )
-									: woo_wallet()->wallet->debit( $uid, $amount, $note, $args );
+								$txn_id = Woo_Wallet_Staff::adjust( $action, $uid, $amount, $note, $call_args );
+								$failed = is_wp_error( $txn_id );
 								return new WP_REST_Response(
-									array( 'user_id' => $uid, 'transaction_id' => (int) $txn_id, 'ok' => (bool) $txn_id ),
+									array(
+										'user_id'        => $uid,
+										'transaction_id' => $failed ? 0 : (int) $txn_id,
+										'ok'             => ! $failed,
+										'error'          => $failed ? $txn_id->get_error_message() : null,
+									),
 									200
 								);
 							}
@@ -397,6 +423,9 @@ class TeraWallet_REST_Admin_Transactions_Controller extends TeraWallet_REST_Admi
 						}
 					}
 				} else {
+					if ( ! current_user_can( Woo_Wallet_Staff::CAP_DELETE_LOGS ) ) {
+						return $this->history_forbidden();
+					}
 					$ids   = array_filter( array_map( 'absint', (array) ( $params['ids'] ?? array() ) ) );
 					$force = ! empty( $params['force'] );
 					if ( ! $ids ) {

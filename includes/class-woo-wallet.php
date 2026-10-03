@@ -125,6 +125,9 @@ final class Woo_Wallet {
 		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-approvals.php';
 		new Woo_Wallet_Approvals();
 
+		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-audit.php';
+		new Woo_Wallet_Audit();
+
 		// Loaded unconditionally and early: captures `user_register` before
 		// `woocommerce_init` so SSO / programmatic signups still get credited.
 		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-signup-handler.php';
@@ -352,6 +355,8 @@ final class Woo_Wallet {
 		$emails['Woo_Wallet_Email_Low_Wallet_Balance'] = include WOO_WALLET_ABSPATH . 'includes/emails/class-woo-wallet-email-low-wallet-balance.php';
 		$emails['Woo_Wallet_Email_Approval_Requested'] = include WOO_WALLET_ABSPATH . 'includes/emails/class-woo-wallet-email-approval-requested.php';
 		$emails['Woo_Wallet_Email_Approval_Decided']   = include WOO_WALLET_ABSPATH . 'includes/emails/class-woo-wallet-email-approval-decided.php';
+		$emails['Woo_Wallet_Email_Staff_Alert']        = include WOO_WALLET_ABSPATH . 'includes/emails/class-woo-wallet-email-staff-alert.php';
+		$emails['Woo_Wallet_Email_Daily_Digest']       = include WOO_WALLET_ABSPATH . 'includes/emails/class-woo-wallet-email-daily-digest.php';
 		return $emails;
 	}
 

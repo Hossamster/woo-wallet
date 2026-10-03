@@ -505,7 +505,12 @@ class Staff_Permissions_Test extends WP_UnitTestCase {
 		wp_set_current_user( $this->agent_id );
 		$this->assertSame( array( 'credit' ), array_keys( $method->invoke( new Woo_Wallet_Balance_Details() ) ) );
 
+		// Deleting a customer's log would erase the record of a manual credit:
+		// administrators only.
 		wp_set_current_user( $this->manager_id );
+		$this->assertSame( array( 'credit', 'debit' ), array_keys( $method->invoke( new Woo_Wallet_Balance_Details() ) ) );
+
+		wp_set_current_user( $this->admin_id );
 		$this->assertSame( array( 'credit', 'debit', 'delete_log' ), array_keys( $method->invoke( new Woo_Wallet_Balance_Details() ) ) );
 	}
 }
