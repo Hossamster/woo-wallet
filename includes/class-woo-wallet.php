@@ -101,6 +101,7 @@ final class Woo_Wallet {
 	public function includes() {
 		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-helper.php';
 		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-security.php';
+		Woo_Wallet_Security::init();
 		include_once WOO_WALLET_ABSPATH . 'includes/helper/woo-wallet-util.php';
 		include_once WOO_WALLET_ABSPATH . 'includes/helper/woo-wallet-transaction-types.php';
 		include_once WOO_WALLET_ABSPATH . 'includes/helper/woo-wallet-update-functions.php';

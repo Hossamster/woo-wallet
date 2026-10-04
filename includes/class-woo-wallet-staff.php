@@ -130,9 +130,6 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 			add_action( 'admin_post_woo_wallet_safeguards', array( $this, 'handle_save_safeguards' ) );
 			add_action( 'admin_post_woo_wallet_reencrypt', array( $this, 'handle_reencrypt' ) );
 			add_action( 'admin_post_woo_wallet_acknowledge_lost_key', array( $this, 'handle_acknowledge_lost_key' ) );
-			add_filter( 'woo_wallet_encrypt_bank_details', array( 'Woo_Wallet_Security', 'bank_details_encryption_enabled' ), 5 );
-			add_action( 'admin_init', array( 'Woo_Wallet_Security', 'ensure_canaries' ) );
-			add_action( 'admin_notices', array( $this, 'maybe_show_key_problem_notice' ) );
 			add_action( 'admin_post_woo_wallet_accountant_remove', array( $this, 'handle_remove_accountant' ) );
 		}
 
@@ -1281,11 +1278,19 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 							<p class="description"><?php esc_html_e( 'Anyone crediting or debiting more than this by hand — including shop managers and administrators, and including the total of a bulk action — has to type the amount a second time. It catches a mistyped 5,000 for 50 without slowing everyday adjustments down. 0 turns it off.', 'woo-wallet' ); ?></p>
 						</td>
 					</tr>
-				</table>
+					<?php
+					$ww_enabled = Woo_Wallet_Security::bank_details_encryption_enabled( (bool) apply_filters( 'woo_wallet_encrypt_bank_details', false ) );
+					$ww_has_key = 'v2' === Woo_Wallet_Security::current_version();
+					?>
 					<tr>
 						<th><?php esc_html_e( 'Encrypt bank details', 'woo-wallet' ); ?></th>
 						<td>
-							<label><input type="checkbox" name="encrypt_bank_details" value="1" <?php checked( Woo_Wallet_Security::bank_details_encryption_enabled( (bool) apply_filters( 'woo_wallet_encrypt_bank_details', false ) ) ); ?> /> <?php esc_html_e( 'Store account numbers and IBANs on withdrawal requests encrypted', 'woo-wallet' ); ?></label>
+							<label><input type="checkbox" name="encrypt_bank_details" value="1" <?php checked( $ww_enabled ); ?> <?php disabled( ! $ww_enabled && ! $ww_has_key ); ?> /> <?php esc_html_e( 'Store account numbers and IBANs on withdrawal requests encrypted', 'woo-wallet' ); ?></label>
+							<?php if ( ! $ww_has_key && ! $ww_enabled ) : ?>
+								<p class="description" style="color:#8a4b00;"><?php esc_html_e( 'Needs a dedicated key first: add WOO_WALLET_ENCRYPTION_KEY to wp-config.php (see "Encryption key" below) and keep a copy of it somewhere safe. Without it, encryption would depend on the WordPress security keys, which hosts and security plugins regenerate — making the data unreadable.', 'woo-wallet' ); ?></p>
+							<?php elseif ( ! $ww_has_key && $ww_enabled ) : ?>
+								<p class="description" style="color:#b32d2e;"><?php esc_html_e( 'Encryption is on but uses the WordPress security keys, because WOO_WALLET_ENCRYPTION_KEY is not defined. Add it to wp-config.php and use "Re-encrypt" below to move existing data to it.', 'woo-wallet' ); ?></p>
+							<?php endif; ?>
 							<p class="description"><?php esc_html_e( 'Protects them if the database alone leaks (a leaked backup, an SQL injection) — not if the whole server is compromised, since the key lives in wp-config.php. Searching withdrawals by account number stops working for encrypted records. Bank details in approval requests are always encrypted.', 'woo-wallet' ); ?></p>
 						</td>
 					</tr>
@@ -1379,14 +1384,44 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 				wp_die( esc_html__( 'You do not have permission to do this.', 'woo-wallet' ) );
 			}
 			check_admin_referer( 'woo_wallet_safeguards' );
-			update_option( self::LARGE_THRESHOLD_OPTION, max( 0.0, isset( $_POST['large_threshold'] ) ? (float) sanitize_text_field( wp_unslash( $_POST['large_threshold'] ) ) : 0 ), false );
-			$enable = ! empty( $_POST['encrypt_bank_details'] );
-			if ( $enable && Woo_Wallet_Security::key_problems() ) {
-				$this->redirect_with_notice( 'error', __( 'The encryption key has changed. Restore the original key before turning encryption on.', 'woo-wallet' ), 'safeguards' );
+			$result = self::save_safeguards(
+				isset( $_POST['large_threshold'] ) ? (float) sanitize_text_field( wp_unslash( $_POST['large_threshold'] ) ) : 0,
+				! empty( $_POST['encrypt_bank_details'] )
+			);
+			$this->redirect_with_notice(
+				is_wp_error( $result ) ? 'error' : 'success',
+				is_wp_error( $result ) ? $result->get_error_message() : __( 'Safeguards saved.', 'woo-wallet' ),
+				'safeguards'
+			);
+		}
+
+		/**
+		 * Save the safeguards settings.
+		 *
+		 * Turning encryption on needs WOO_WALLET_ENCRYPTION_KEY: the fallback
+		 * key comes from the WordPress security keys, which hosts and
+		 * security plugins regenerate, and the data would become unreadable.
+		 * A site that already has it on (set before this rule) may keep it on
+		 * while it adds the key.
+		 *
+		 * @param float $threshold Large-adjustment threshold.
+		 * @param bool  $encrypt   Encrypt bank details.
+		 * @return true|WP_Error
+		 */
+		public static function save_safeguards( $threshold, $encrypt ) {
+			update_option( self::LARGE_THRESHOLD_OPTION, max( 0.0, (float) $threshold ), false );
+			$already = 'yes' === get_option( Woo_Wallet_Security::ENABLED_OPTION, 'no' );
+			if ( $encrypt && ! $already ) {
+				if ( 'v2' !== Woo_Wallet_Security::current_version() ) {
+					return new WP_Error( 'woo_wallet_encryption_key_required', __( 'Add WOO_WALLET_ENCRYPTION_KEY to wp-config.php (and keep a copy of it somewhere safe) before turning encryption on. The other settings were saved.', 'woo-wallet' ) );
+				}
+				if ( Woo_Wallet_Security::key_problems() ) {
+					return new WP_Error( 'woo_wallet_key_problem', __( 'The encryption key has changed. Restore the original key before turning encryption on. The other settings were saved.', 'woo-wallet' ) );
+				}
 			}
-			update_option( Woo_Wallet_Security::ENABLED_OPTION, $enable ? 'yes' : 'no', false );
+			update_option( Woo_Wallet_Security::ENABLED_OPTION, $encrypt ? 'yes' : 'no', false );
 			Woo_Wallet_Security::ensure_canaries();
-			$this->redirect_with_notice( 'success', __( 'Safeguards saved.', 'woo-wallet' ), 'safeguards' );
+			return true;
 		}
 
 		/**
@@ -1426,29 +1461,6 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 				Woo_Wallet_Audit::record( Woo_Wallet_Audit::EVENT_STAFF_CHANGED, 0, 0, 0, array( 'change' => 'encryption_key_loss_acknowledged', 'version' => $version ) );
 			}
 			$this->redirect_with_notice( 'success', __( 'Understood. Bank details encrypted with the old key will keep showing as unreadable.', 'woo-wallet' ), 'safeguards' );
-		}
-
-		/**
-		 * Warn administrators, on every admin screen, that the encryption key
-		 * no longer matches the one stored bank details were encrypted with.
-		 */
-		public function maybe_show_key_problem_notice() {
-			if ( ! current_user_can( self::CAP_MANAGE_SETTINGS ) ) {
-				return;
-			}
-			$problems = Woo_Wallet_Security::key_problems();
-			if ( ! $problems ) {
-				return;
-			}
-			$message = in_array( 'v2', $problems, true )
-				? __( 'Axfit Wallet: WOO_WALLET_ENCRYPTION_KEY in wp-config.php is different from (or missing compared with) the key used to encrypt stored bank details, so they cannot be read. Put the original value back in wp-config.php.', 'woo-wallet' )
-				: __( 'Axfit Wallet: the WordPress security keys (salts) in wp-config.php have changed since stored bank details were encrypted, so they cannot be read. Put the original SECURE_AUTH_KEY back in wp-config.php — this often happens after moving host or after a security plugin regenerates the keys.', 'woo-wallet' );
-			printf(
-				'<div class="notice notice-warning"><p><strong>%1$s</strong></p><p><a href="%2$s">%3$s</a></p></div>',
-				esc_html( $message ),
-				esc_url( admin_url( 'admin.php?page=woo-wallet-staff&tab=safeguards' ) ),
-				esc_html__( 'Details and options', 'woo-wallet' )
-			);
 		}
 
 		/**

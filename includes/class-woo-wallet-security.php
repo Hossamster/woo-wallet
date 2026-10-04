@@ -203,6 +203,40 @@ class Woo_Wallet_Security {
 		return self::is_unreadable( $value ) ? self::unreadable_text() : self::decrypt( $value );
 	}
 
+	/**
+	 * Register the encryption hooks. Called from the plugin bootstrap, so
+	 * encryption never depends on any other part of the plugin being loaded.
+	 */
+	public static function init() {
+		add_filter( 'woo_wallet_encrypt_bank_details', array( __CLASS__, 'bank_details_encryption_enabled' ), 5 );
+		add_action( 'admin_init', array( __CLASS__, 'ensure_canaries' ) );
+		add_action( 'admin_notices', array( __CLASS__, 'maybe_show_key_problem_notice' ) );
+	}
+
+	/**
+	 * Warn administrators, on every admin screen, that the encryption key
+	 * no longer matches the one stored bank details were encrypted with.
+	 */
+	public static function maybe_show_key_problem_notice() {
+		$cap = class_exists( 'Woo_Wallet_Staff' ) ? Woo_Wallet_Staff::CAP_MANAGE_SETTINGS : 'manage_options';
+		if ( ! current_user_can( $cap ) ) {
+			return;
+		}
+		$problems = self::key_problems();
+		if ( ! $problems ) {
+			return;
+		}
+		$message = in_array( 'v2', $problems, true )
+			? __( 'Axfit Wallet: WOO_WALLET_ENCRYPTION_KEY in wp-config.php is different from (or missing compared with) the key used to encrypt stored bank details, so they cannot be read. Put the original value back in wp-config.php.', 'woo-wallet' )
+			: __( 'Axfit Wallet: the WordPress security keys (salts) in wp-config.php have changed since stored bank details were encrypted, so they cannot be read. Put the original SECURE_AUTH_KEY back in wp-config.php — this often happens after moving host or after a security plugin regenerates the keys.', 'woo-wallet' );
+		printf(
+			'<div class="notice notice-warning"><p><strong>%1$s</strong></p><p><a href="%2$s">%3$s</a></p></div>',
+			esc_html( $message ),
+			esc_url( admin_url( 'admin.php?page=woo-wallet-staff&tab=safeguards' ) ),
+			esc_html__( 'Details and options', 'woo-wallet' )
+		);
+	}
+
 	/* ---------------- key-change detection ---------------- */
 
 	/**

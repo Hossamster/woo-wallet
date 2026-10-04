@@ -105,7 +105,7 @@ class Encryption_Key_Test extends WP_UnitTestCase {
 
 		wp_set_current_user( $this->admin_id );
 		ob_start();
-		( new Woo_Wallet_Staff() )->maybe_show_key_problem_notice();
+		Woo_Wallet_Security::maybe_show_key_problem_notice();
 		$this->assertStringContainsString( 'security keys (salts)', ob_get_clean() );
 	}
 
@@ -184,6 +184,41 @@ class Encryption_Key_Test extends WP_UnitTestCase {
 		update_option( Woo_Wallet_Security::ENABLED_OPTION, 'yes' );
 		$id = $this->create_withdrawal();
 		$this->assertSame( 'EG380019000500000000263180002', Woo_Wallet_Withdrawal::get_request( $id )->iban );
+	}
+
+	public function test_encryption_is_registered_by_the_security_class_itself() {
+		$this->assertSame( 5, has_filter( 'woo_wallet_encrypt_bank_details', array( 'Woo_Wallet_Security', 'bank_details_encryption_enabled' ) ) );
+		$this->assertNotFalse( has_action( 'admin_notices', array( 'Woo_Wallet_Security', 'maybe_show_key_problem_notice' ) ) );
+	}
+
+	public function test_turning_encryption_on_needs_the_dedicated_key() {
+		$result = Woo_Wallet_Staff::save_safeguards( 500, true );
+
+		$this->assertSame( 'woo_wallet_encryption_key_required', $result->get_error_code() );
+		$this->assertSame( 'no', get_option( Woo_Wallet_Security::ENABLED_OPTION, 'no' ) );
+		$this->assertSame( 500.0, Woo_Wallet_Staff::large_threshold(), 'The other settings are still saved.' );
+
+		$this->dedicated_key = 'a-dedicated-key';
+		$this->assertTrue( Woo_Wallet_Staff::save_safeguards( 500, true ) );
+		$this->assertSame( 'yes', get_option( Woo_Wallet_Security::ENABLED_OPTION ) );
+	}
+
+	public function test_a_site_that_already_encrypts_with_the_salts_can_keep_it_on_while_adding_the_key() {
+		update_option( Woo_Wallet_Security::ENABLED_OPTION, 'yes' );
+		$this->assertTrue( Woo_Wallet_Staff::save_safeguards( 0, true ) );
+		$this->assertSame( 'yes', get_option( Woo_Wallet_Security::ENABLED_OPTION ) );
+	}
+
+	public function test_the_checkbox_is_disabled_until_the_key_exists() {
+		wp_set_current_user( $this->admin_id );
+		$_GET = array( 'page' => 'woo-wallet-staff', 'tab' => 'safeguards' );
+		ob_start();
+		( new Woo_Wallet_Staff() )->render_page();
+		$html = ob_get_clean();
+		$_GET = array();
+
+		$this->assertMatchesRegularExpression( '/name="encrypt_bank_details"[^>]*disabled/', $html );
+		$this->assertStringContainsString( 'Needs a dedicated key first', $html );
 	}
 
 	public function test_the_safeguards_tab_renders() {
