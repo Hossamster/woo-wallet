@@ -89,6 +89,8 @@ if ( ! class_exists( 'TeraWallet_REST_Public_Settings_Controller' ) ) {
 					'max'          => (float) $settings->get_option( 'max_withdrawal_amount', '_wallet_settings_withdrawal', 0 ),
 					'charge_type'  => $settings->get_option( 'withdrawal_charge_type', '_wallet_settings_withdrawal', 'fixed' ),
 					'charge_value' => (float) $settings->get_option( 'withdrawal_charge_amount', '_wallet_settings_withdrawal', 0 ),
+					// 0 = no cap. Applies to a percentage charge.
+					'charge_max'   => (float) $settings->get_option( 'withdrawal_charge_max', '_wallet_settings_withdrawal', 0 ),
 					'banks'        => class_exists( 'Woo_Wallet_Withdrawal' ) ? array_values( Woo_Wallet_Withdrawal::get_configured_banks() ) : array(),
 				),
 				'cashback_enabled' => 'on' === $settings->get_option( 'is_enable_cashback_reward_program', '_wallet_settings_credit', 'off' ),
@@ -157,6 +159,7 @@ if ( ! class_exists( 'TeraWallet_REST_Public_Settings_Controller' ) ) {
 							'max'          => array( 'type' => 'number' ),
 							'charge_type'  => array( 'type' => 'string' ),
 							'charge_value' => array( 'type' => 'number' ),
+							'charge_max'   => array( 'type' => 'number' ),
 							'banks'        => array( 'type' => 'array', 'items' => array( 'type' => 'string' ) ),
 						),
 					),

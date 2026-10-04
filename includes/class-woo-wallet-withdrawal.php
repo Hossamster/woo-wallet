@@ -181,6 +181,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				add_action( 'admin_post_woo_wallet_withdrawal_process', array( $this, 'handle_admin_process_request' ) );
 				add_action( 'admin_post_woo_wallet_withdrawal_create', array( $this, 'handle_admin_create_request' ) );
 				add_action( 'admin_post_woo_wallet_withdrawal_add_note', array( $this, 'handle_admin_add_note' ) );
+				add_action( 'admin_post_woo_wallet_withdrawal_edit', array( $this, 'handle_admin_edit_request' ) );
 				add_action( 'admin_post_woo_wallet_withdrawal_recover', array( $this, 'handle_admin_recover_request' ) );
 				add_action( 'admin_notices', array( $this, 'admin_notices' ) );
 				add_action( 'admin_notices', array( $this, 'maybe_show_stuck_processing_notice' ) );
@@ -306,6 +307,24 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					'default' => '0',
 					'group'   => 'wallet_withdrawal',
 					'show_if' => $enabled_show_if,
+					'half'    => true,
+				),
+				array(
+					'name'    => 'withdrawal_charge_max',
+					'label'   => __( 'Maximum Withdrawal Charge', 'woo-wallet' ),
+					/* translators: %s: currency symbol */
+					'desc'    => sprintf( __( 'Optional cap on a percentage charge, in %s — e.g. 0.1%% of 100,000 is 100, but with a maximum of 20 the customer pays 20. Leave 0 for no cap.', 'woo-wallet' ), $currency_symbol ),
+					'type'    => 'number',
+					'step'    => '0.01',
+					'default' => '0',
+					'group'   => 'wallet_withdrawal',
+					'show_if' => array(
+						$enabled_show_if,
+						array(
+							'field'  => 'withdrawal_charge_type',
+							'equals' => 'percent',
+						),
+					),
 					'half'    => true,
 				),
 				array(
@@ -598,10 +617,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @return array {is_valid, message, id, charge}
 		 */
 		private static function reserve_and_insert( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, $iban, $created_by, $status = 'pending', $reference_no = '' ) {
-			$charge_type   = woo_wallet()->settings_api->get_option( 'withdrawal_charge_type', '_wallet_settings_withdrawal', 'fixed' );
-			$charge_amount = (float) woo_wallet()->settings_api->get_option( 'withdrawal_charge_amount', '_wallet_settings_withdrawal', 0 );
-			$charge        = 'percent' === $charge_type ? ( $amount * $charge_amount ) / 100 : $charge_amount;
-			$charge        = (float) apply_filters( 'woo_wallet_withdrawal_charge_amount', $charge, $user_id, $amount );
+			$charge        = self::calculate_charge( $amount, $user_id );
 			$debit_amount  = $amount + $charge;
 
 			$current_balance = woo_wallet()->wallet->get_wallet_balance( $user_id, 'edit' );
@@ -2066,6 +2082,68 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
+		 * Whether marking a withdrawal paid needs the bank transfer's
+		 * reference number and receipt. On by default: without them there is
+		 * no record of where the money actually went.
+		 *
+		 * @return bool
+		 */
+		public static function payment_proof_required() {
+			return (bool) apply_filters( 'woo_wallet_withdrawal_require_payment_proof', true );
+		}
+
+		/**
+		 * Check a paid withdrawal has its proof of payment.
+		 *
+		 * @param string $reference_no Bank transfer reference number.
+		 * @param bool   $has_receipt  Whether a receipt is being attached or already is.
+		 * @return true|WP_Error
+		 */
+		public static function check_payment_proof( $reference_no, $has_receipt ) {
+			if ( ! self::payment_proof_required() ) {
+				return true;
+			}
+			$missing = array();
+			if ( '' === trim( (string) $reference_no ) ) {
+				$missing[] = __( 'the bank transfer reference number', 'woo-wallet' );
+			}
+			if ( ! $has_receipt ) {
+				$missing[] = __( 'the transfer receipt', 'woo-wallet' );
+			}
+			if ( ! $missing ) {
+				return true;
+			}
+			return new WP_Error(
+				'woo_wallet_withdrawal_payment_proof',
+				/* translators: %s: what is missing */
+				sprintf( __( 'A withdrawal can only be marked paid with %s. Nothing was changed.', 'woo-wallet' ), implode( __( ' and ', 'woo-wallet' ), $missing ) )
+			);
+		}
+
+		/**
+		 * The charge on a withdrawal: the configured fixed amount or
+		 * percentage, capped at the optional maximum (so a percentage charge
+		 * on a large withdrawal never exceeds what the transfer actually
+		 * costs), then passed through the woo_wallet_withdrawal_charge_amount
+		 * filter.
+		 *
+		 * @param float $amount  Requested amount.
+		 * @param int   $user_id Customer.
+		 * @return float
+		 */
+		public static function calculate_charge( $amount, $user_id = 0 ) {
+			$settings      = woo_wallet()->settings_api;
+			$charge_type   = $settings->get_option( 'withdrawal_charge_type', '_wallet_settings_withdrawal', 'fixed' );
+			$charge_amount = (float) $settings->get_option( 'withdrawal_charge_amount', '_wallet_settings_withdrawal', 0 );
+			$charge_max    = (float) $settings->get_option( 'withdrawal_charge_max', '_wallet_settings_withdrawal', 0 );
+			$charge        = 'percent' === $charge_type ? ( (float) $amount * $charge_amount ) / 100 : $charge_amount;
+			if ( $charge_max > 0 && $charge > $charge_max ) {
+				$charge = $charge_max;
+			}
+			return (float) apply_filters( 'woo_wallet_withdrawal_charge_amount', $charge, $user_id, $amount );
+		}
+
+		/**
 		 * Where the balance being withdrawn came from, when part of it was
 		 * credited by hand by staff in the last few days. Credit added to an
 		 * accomplice's wallet only leaves the store when it is withdrawn, so
@@ -2161,12 +2239,12 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 							<td><input type="text" id="ww-iban" name="iban" class="regular-text" /></td>
 						</tr>
 						<tr>
-							<th><label for="ww-reference"><?php esc_html_e( 'Reference No. (optional)', 'woo-wallet' ); ?></label></th>
+							<th><label for="ww-reference"><?php echo self::payment_proof_required() ? esc_html__( 'Reference No. (required if already paid)', 'woo-wallet' ) : esc_html__( 'Reference No. (optional)', 'woo-wallet' ); ?></label></th>
 							<td><input type="text" id="ww-reference" name="reference_no" class="regular-text" /></td>
 						</tr>
 						<?php if ( current_user_can( Woo_Wallet_Staff::CAP_PROCESS_WITHDRAWALS ) ) : ?>
 						<tr>
-							<th><label for="ww-receipt"><?php esc_html_e( 'Receipt (optional)', 'woo-wallet' ); ?></label></th>
+							<th><label for="ww-receipt"><?php echo self::payment_proof_required() ? esc_html__( 'Receipt (required if already paid)', 'woo-wallet' ) : esc_html__( 'Receipt (optional)', 'woo-wallet' ); ?></label></th>
 							<td>
 								<input type="file" id="ww-receipt" name="receipt" accept=".pdf,.png,.jpg,.jpeg" />
 								<p class="description"><?php esc_html_e( 'PDF, PNG or JPG.', 'woo-wallet' ); ?></p>
@@ -2197,6 +2275,23 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					<?php submit_button( __( 'Create Withdrawal', 'woo-wallet' ) ); ?>
 					<a href="<?php echo esc_url( $list_url ); ?>" class="button"><?php esc_html_e( 'Cancel', 'woo-wallet' ); ?></a>
 				</form>
+				<?php if ( self::payment_proof_required() ) : ?>
+				<script>
+					( function () {
+						var status = document.getElementById( 'ww-status' );
+						if ( ! status ) {
+							return;
+						}
+						function sync() {
+							var paid = 'paid' === status.value;
+							document.getElementById( 'ww-reference' ).required = paid;
+							document.getElementById( 'ww-receipt' ).required   = paid;
+						}
+						status.addEventListener( 'change', sync );
+						sync();
+					} )();
+				</script>
+				<?php endif; ?>
 			</div>
 			<?php
 		}
@@ -2337,14 +2432,25 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 						<?php wp_nonce_field( 'woo_wallet_withdrawal_process' ); ?>
 						<table class="form-table">
 							<tr>
-								<th><label for="ww-proc-reference"><?php esc_html_e( 'Reference No.', 'woo-wallet' ); ?></label></th>
-								<td><input type="text" id="ww-proc-reference" name="reference_no" class="regular-text" value="<?php echo esc_attr( $request->reference_no ); ?>" /></td>
+								<th><label for="ww-proc-reference"><?php esc_html_e( 'Reference No.', 'woo-wallet' ); ?><?php echo self::payment_proof_required() ? ' <span style="color:#b32d2e;">*</span>' : ''; ?></label></th>
+								<td>
+									<input type="text" id="ww-proc-reference" name="reference_no" class="regular-text" value="<?php echo esc_attr( $request->reference_no ); ?>" />
+									<?php if ( self::payment_proof_required() ) : ?>
+										<p class="description"><?php esc_html_e( 'Required to mark as paid.', 'woo-wallet' ); ?></p>
+									<?php endif; ?>
+								</td>
 							</tr>
 							<tr>
-								<th><label for="ww-proc-receipt"><?php esc_html_e( 'Receipt', 'woo-wallet' ); ?></label></th>
+								<th><label for="ww-proc-receipt"><?php esc_html_e( 'Receipt', 'woo-wallet' ); ?><?php echo self::payment_proof_required() && ! self::has_receipt( $request ) ? ' <span style="color:#b32d2e;">*</span>' : ''; ?></label></th>
 								<td>
-									<input type="file" id="ww-proc-receipt" name="receipt" accept=".pdf,.png,.jpg,.jpeg" />
-									<p class="description"><?php esc_html_e( 'PDF, PNG or JPG.', 'woo-wallet' ); ?></p>
+									<input type="file" id="ww-proc-receipt" name="receipt" accept=".pdf,.png,.jpg,.jpeg" data-has-receipt="<?php echo self::has_receipt( $request ) ? '1' : '0'; ?>" />
+									<p class="description">
+										<?php
+										echo self::has_receipt( $request )
+											? esc_html__( 'PDF, PNG or JPG. A receipt is already attached — upload one only to replace it.', 'woo-wallet' )
+											: ( self::payment_proof_required() ? esc_html__( 'PDF, PNG or JPG. Required to mark as paid.', 'woo-wallet' ) : esc_html__( 'PDF, PNG or JPG.', 'woo-wallet' ) );
+										?>
+									</p>
 								</td>
 							</tr>
 							<tr>
@@ -2359,7 +2465,19 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 								</td>
 							</tr>
 						</table>
-						<button type="submit" name="ww_action" value="paid" class="button button-primary" onclick="return confirm('<?php echo esc_js( __( 'Mark this withdrawal as paid? Make sure you have already sent the bank transfer.', 'woo-wallet' ) ); ?>');"><?php esc_html_e( 'Mark paid', 'woo-wallet' ); ?></button>
+						<script>
+						function wwConfirmPaid() {
+							var requireProof = <?php echo self::payment_proof_required() ? 'true' : 'false'; ?>;
+							var ref = document.getElementById( 'ww-proc-reference' ).value.trim();
+							var file = document.getElementById( 'ww-proc-receipt' );
+							if ( requireProof && ( '' === ref || ( ! file.files.length && '1' !== file.dataset.hasReceipt ) ) ) {
+								alert( '<?php echo esc_js( __( 'Enter the bank transfer reference number and attach the transfer receipt before marking this withdrawal as paid.', 'woo-wallet' ) ); ?>' );
+								return false;
+							}
+							return confirm( '<?php echo esc_js( __( 'Mark this withdrawal as paid? Make sure you have already sent the bank transfer.', 'woo-wallet' ) ); ?>' );
+						}
+						</script>
+						<button type="submit" name="ww_action" value="paid" class="button button-primary" onclick="return wwConfirmPaid();"><?php esc_html_e( 'Mark paid', 'woo-wallet' ); ?></button>
 						<button type="submit" name="ww_action" value="reject" class="button" onclick="return confirm('<?php echo esc_js( __( 'Reject this request? The reserved amount will be returned to the customer wallet.', 'woo-wallet' ) ); ?>');"><?php esc_html_e( 'Reject', 'woo-wallet' ); ?></button>
 					</form>
 				<?php elseif ( 'processing' === $request->status ) : ?>
@@ -2373,6 +2491,35 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 							<button type="submit" class="button button-primary" onclick="return confirm('<?php echo esc_js( __( 'Recover this request? This finishes it as rejected, sending the refund only if it has not already gone out.', 'woo-wallet' ) ); ?>');"><?php esc_html_e( 'Recover', 'woo-wallet' ); ?></button>
 						</form>
 					</div>
+				<?php endif; ?>
+
+				<?php if ( current_user_can( Woo_Wallet_Staff::CAP_EDIT_WITHDRAWALS ) && 'processing' !== $request->status ) : ?>
+					<details style="margin:20px 0;" <?php echo 'paid' === $request->status && ( '' === (string) $request->reference_no || ! self::has_receipt( $request ) ) ? 'open' : ''; ?>>
+						<summary style="cursor:pointer;font-size:14px;font-weight:600;"><?php esc_html_e( 'Edit details', 'woo-wallet' ); ?></summary>
+						<p class="description"><?php esc_html_e( 'Correct the bank details, reference number or receipt — also after the request has been paid. Every change is added to the notes below with who made it, and to the staff activity log. Changing the bank details of a paid request also emails every administrator.', 'woo-wallet' ); ?></p>
+						<form method="post" action="<?php echo esc_url( $post_url ); ?>" enctype="multipart/form-data">
+							<input type="hidden" name="action" value="woo_wallet_withdrawal_edit" />
+							<input type="hidden" name="withdrawal_id" value="<?php echo esc_attr( $request->id ); ?>" />
+							<?php wp_nonce_field( 'woo_wallet_withdrawal_edit' ); ?>
+							<?php Woo_Wallet_Staff::form_token_field(); ?>
+							<table class="form-table">
+								<?php foreach ( self::editable_fields() as $ww_key => $ww_label ) : ?>
+									<tr>
+										<th><label for="ww-edit-<?php echo esc_attr( $ww_key ); ?>"><?php echo esc_html( $ww_label ); ?></label></th>
+										<td><input type="text" id="ww-edit-<?php echo esc_attr( $ww_key ); ?>" name="<?php echo esc_attr( $ww_key ); ?>" class="regular-text" value="<?php echo esc_attr( (string) $request->$ww_key ); ?>" /></td>
+									</tr>
+								<?php endforeach; ?>
+								<tr>
+									<th><label for="ww-edit-receipt"><?php echo self::has_receipt( $request ) ? esc_html__( 'Replace receipt', 'woo-wallet' ) : esc_html__( 'Attach receipt', 'woo-wallet' ); ?></label></th>
+									<td>
+										<input type="file" id="ww-edit-receipt" name="receipt" accept=".pdf,.png,.jpg,.jpeg" />
+										<p class="description"><?php esc_html_e( 'PDF, PNG or JPG. Leave empty to keep the current one.', 'woo-wallet' ); ?></p>
+									</td>
+								</tr>
+							</table>
+							<?php submit_button( __( 'Save changes', 'woo-wallet' ), 'secondary', 'submit', false ); ?>
+						</form>
+					</details>
 				<?php endif; ?>
 
 				<h2><?php esc_html_e( 'Notes', 'woo-wallet' ); ?></h2>
@@ -2581,6 +2728,16 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 
+			if ( 'paid' === $status ) {
+				$proof = self::check_payment_proof( $reference_no, (bool) $receipt_id );
+				if ( is_wp_error( $proof ) ) {
+					return array(
+						'is_valid' => false,
+						'message'  => $proof->get_error_message(),
+					);
+				}
+			}
+
 			// Copy the receipt into secure storage before reserving any funds,
 			// so a failed copy never leaves a debit with nothing to show for it.
 			$receipt_key = '';
@@ -2627,6 +2784,269 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				'message'  => sprintf( __( 'Withdrawal #%d created.', 'woo-wallet' ), $result['id'] ),
 				'id'       => $result['id'],
 			);
+		}
+
+		/**
+		 * The withdrawal fields staff may correct after the fact, with labels.
+		 * The amount, charge and status are deliberately not here: they move
+		 * money, which only the normal process / reject flow does.
+		 *
+		 * @return string[]
+		 */
+		public static function editable_fields() {
+			return array(
+				'bank_name'        => __( 'Bank', 'woo-wallet' ),
+				'beneficiary_name' => __( 'Beneficiary name', 'woo-wallet' ),
+				'account_number'   => __( 'Account number', 'woo-wallet' ),
+				'iban'             => __( 'IBAN', 'woo-wallet' ),
+				'phone'            => __( 'Phone', 'woo-wallet' ),
+				'reference_no'     => __( 'Reference No.', 'woo-wallet' ),
+			);
+		}
+
+		/**
+		 * Correct a withdrawal's details — including after it has been paid —
+		 * and/or replace its receipt. Every change is written to the request's
+		 * notes (who changed what, from what to what; bank numbers shown by
+		 * their last four digits) and to the staff audit log. Changing the bank
+		 * details of a request that has already been paid is the change that
+		 * could disguise where money actually went, so it is also emailed to
+		 * administrators at once.
+		 *
+		 * @param int   $id         Withdrawal id.
+		 * @param array $fields     New values, keyed as in editable_fields(); keys left out are not changed.
+		 * @param int   $receipt_id Optional new receipt (a wallet-owned temporary upload).
+		 * @param int   $editor_id  Staff member editing.
+		 * @return array {is_valid, message, receipt_orphaned?}
+		 */
+		public static function admin_edit( $id, array $fields, $receipt_id, $editor_id ) {
+			global $wpdb;
+			$request = $id ? self::get_request( $id ) : null;
+			if ( ! $request ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'Withdrawal request not found.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+			if ( 'processing' === $request->status ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'This request needs recovering before it can be edited.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+
+			$normalize = array(
+				'bank_name'        => function ( $v ) {
+					return trim( (string) $v );
+				},
+				'beneficiary_name' => function ( $v ) {
+					return trim( (string) $v );
+				},
+				'account_number'   => function ( $v ) {
+					return preg_replace( '/\s+/', '', (string) $v );
+				},
+				'iban'             => function ( $v ) {
+					return strtoupper( preg_replace( '/\s+/', '', (string) $v ) );
+				},
+				'phone'            => function ( $v ) {
+					return preg_replace( '/[^0-9+]/', '', (string) $v );
+				},
+				'reference_no'     => function ( $v ) {
+					return trim( (string) $v );
+				},
+			);
+			$new = array();
+			foreach ( self::editable_fields() as $key => $label ) {
+				$new[ $key ] = array_key_exists( $key, $fields ) ? $normalize[ $key ]( $fields[ $key ] ) : (string) $request->$key;
+			}
+
+			if ( '' === $new['bank_name'] || '' === $new['beneficiary_name'] || '' === $new['account_number'] ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'Bank, beneficiary name and account number are required.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+			if ( strlen( $new['phone'] ) < 8 ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'Please enter a valid contact phone number.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+			if ( 'paid' === $request->status ) {
+				$proof = self::check_payment_proof( $new['reference_no'], true );
+				if ( is_wp_error( $proof ) ) {
+					return array(
+						'is_valid'         => false,
+						'message'          => __( 'A paid withdrawal must keep its bank transfer reference number.', 'woo-wallet' ),
+						'receipt_orphaned' => (bool) $receipt_id,
+					);
+				}
+			}
+
+			$changes = array();
+			foreach ( self::editable_fields() as $key => $label ) {
+				if ( $new[ $key ] !== (string) $request->$key ) {
+					$changes[ $key ] = array(
+						'from' => (string) $request->$key,
+						'to'   => $new[ $key ],
+					);
+				}
+			}
+			if ( ! $changes && ! $receipt_id ) {
+				return array(
+					'is_valid' => true,
+					'message'  => __( 'Nothing was changed.', 'woo-wallet' ),
+				);
+			}
+
+			$receipt_key = '';
+			if ( $receipt_id ) {
+				$receipt_key = self::stage_receipt( $receipt_id );
+				if ( is_wp_error( $receipt_key ) ) {
+					return array(
+						'is_valid'         => false,
+						/* translators: %s: reason the receipt could not be stored */
+						'message'          => sprintf( __( 'The receipt could not be stored securely, so nothing was changed: %s', 'woo-wallet' ), $receipt_key->get_error_message() ),
+						'receipt_orphaned' => true,
+					);
+				}
+			}
+
+			$encrypt = apply_filters( 'woo_wallet_encrypt_bank_details', false ) && class_exists( 'Woo_Wallet_Security' );
+			$update  = array();
+			$formats = array();
+			foreach ( $changes as $key => $change ) {
+				$value           = $change['to'];
+				$update[ $key ]  = ( $encrypt && in_array( $key, array( 'account_number', 'iban' ), true ) && '' !== $value ) ? Woo_Wallet_Security::encrypt( $value ) : $value;
+				$formats[]       = '%s';
+			}
+			if ( $receipt_key ) {
+				$update['receipt_key'] = $receipt_key;
+				$update['receipt_id']  = 0;
+				$formats[]             = '%s';
+				$formats[]             = '%d';
+			}
+			// Conditioned on the status read above, so an edit racing a
+			// mark-paid / reject never overwrites what that just wrote.
+			$saved = $wpdb->update( self::table(), $update, array( 'id' => $request->id, 'status' => $request->status ), $formats, array( '%d', '%s' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+			if ( ! $saved ) {
+				self::discard_staged_receipt( $receipt_key );
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'The request changed while you were editing it — no changes were made. Please reload and try again.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+			if ( $receipt_key ) {
+				self::delete_receipt_upload( $receipt_id );
+				self::release_previous_receipt( $request );
+			}
+
+			$masked_keys = array( 'account_number', 'iban' );
+			$show        = function ( $key, $value ) use ( $masked_keys ) {
+				if ( '' === $value ) {
+					return '—';
+				}
+				return in_array( $key, $masked_keys, true ) && class_exists( 'Woo_Wallet_Security' ) ? (string) Woo_Wallet_Security::mask( $value, 4 ) : $value;
+			};
+			$labels = self::editable_fields();
+			$lines  = array();
+			$logged = array();
+			foreach ( $changes as $key => $change ) {
+				$lines[]        = sprintf( '%s: %s → %s', $labels[ $key ], $show( $key, $change['from'] ), $show( $key, $change['to'] ) );
+				$logged[ $key ] = array(
+					'from' => $show( $key, $change['from'] ),
+					'to'   => $show( $key, $change['to'] ),
+				);
+			}
+			if ( $receipt_key ) {
+				$lines[]           = self::has_receipt( $request ) ? __( 'Receipt replaced.', 'woo-wallet' ) : __( 'Receipt attached.', 'woo-wallet' );
+				$logged['receipt'] = self::has_receipt( $request ) ? 'replaced' : 'attached';
+			}
+			$editor = get_userdata( (int) $editor_id );
+			self::add_note(
+				$request->id,
+				sprintf(
+					/* translators: 1: staff name, 2: request status, 3: list of changes */
+					__( 'Details edited by %1$s (request was %2$s): %3$s', 'woo-wallet' ),
+					$editor ? $editor->display_name : '#' . (int) $editor_id,
+					$request->status,
+					implode( '; ', $lines )
+				),
+				'private',
+				(int) $editor_id
+			);
+
+			$bank_changed = (bool) array_intersect( array_keys( $changes ), array( 'bank_name', 'beneficiary_name', 'account_number', 'iban' ) );
+			if ( class_exists( 'Woo_Wallet_Audit' ) ) {
+				Woo_Wallet_Audit::record(
+					'paid' === $request->status && $bank_changed ? Woo_Wallet_Audit::EVENT_PAID_BANK_DETAILS_CHANGED : Woo_Wallet_Audit::EVENT_WITHDRAWAL_EDITED,
+					(int) $request->user_id,
+					(int) $request->id,
+					(float) $request->amount,
+					array(
+						'status'  => $request->status,
+						'changes' => $logged,
+					)
+				);
+			}
+			do_action( 'woo_wallet_withdrawal_edited', $request->id, array_keys( $changes ), (bool) $receipt_key, (int) $editor_id );
+
+			return array(
+				'is_valid' => true,
+				/* translators: %d: withdrawal id */
+				'message'  => sprintf( __( 'Withdrawal #%d updated.', 'woo-wallet' ), $request->id ),
+			);
+		}
+
+		/**
+		 * Handle the edit form on the detail screen.
+		 */
+		public function handle_admin_edit_request() {
+			if ( ! current_user_can( Woo_Wallet_Staff::CAP_EDIT_WITHDRAWALS ) ) {
+				wp_die( esc_html__( 'You do not have permission to do this.', 'woo-wallet' ) );
+			}
+			check_admin_referer( 'woo_wallet_withdrawal_edit' );
+			$admin_id = get_current_user_id();
+			$id       = isset( $_POST['withdrawal_id'] ) ? absint( $_POST['withdrawal_id'] ) : 0;
+			$back     = add_query_arg( array( 'page' => 'woo-wallet-withdrawals', 'action' => 'view', 'id' => $id ), admin_url( 'admin.php' ) );
+
+			if ( ! Woo_Wallet_Staff::claim_submitted_form_token() ) {
+				set_transient( 'woo_wallet_withdrawal_admin_notice_' . $admin_id, array( 'type' => 'error', 'message' => __( 'This edit was already submitted.', 'woo-wallet' ) ), MINUTE_IN_SECONDS );
+				wp_safe_redirect( $back );
+				exit();
+			}
+
+			$fields = array();
+			foreach ( array_keys( self::editable_fields() ) as $key ) {
+				if ( isset( $_POST[ $key ] ) ) {
+					$fields[ $key ] = sanitize_text_field( wp_unslash( $_POST[ $key ] ) );
+				}
+			}
+			$receipt = self::handle_receipt_upload( 'receipt' );
+			if ( $receipt['error'] ) {
+				/* translators: %s: upload error message */
+				$result = array( 'is_valid' => false, 'message' => sprintf( __( 'Receipt upload failed, so nothing was changed: %s', 'woo-wallet' ), $receipt['error'] ) );
+			} else {
+				$result = self::admin_edit( $id, $fields, $receipt['id'], $admin_id );
+				if ( ! empty( $result['receipt_orphaned'] ) && $receipt['id'] ) {
+					wp_delete_attachment( $receipt['id'], true );
+				}
+			}
+			set_transient(
+				'woo_wallet_withdrawal_admin_notice_' . $admin_id,
+				array(
+					'type'    => $result['is_valid'] ? 'success' : 'error',
+					'message' => $result['message'],
+				),
+				MINUTE_IN_SECONDS
+			);
+			wp_safe_redirect( $back );
+			exit();
 		}
 
 		/**
@@ -2756,6 +3176,16 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					'message'          => __( 'Invalid action.', 'woo-wallet' ),
 					'receipt_orphaned' => (bool) $receipt_id,
 				);
+			}
+			if ( 'paid' === $action ) {
+				$proof = self::check_payment_proof( $reference_no, $receipt_id || self::has_receipt( $request ) );
+				if ( is_wp_error( $proof ) ) {
+					return array(
+						'is_valid'         => false,
+						'message'          => $proof->get_error_message(),
+						'receipt_orphaned' => (bool) $receipt_id,
+					);
+				}
 			}
 
 			// Copy the receipt into secure storage before changing anything; the

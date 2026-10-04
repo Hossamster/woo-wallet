@@ -69,6 +69,8 @@ class Admin_Process_Money_Safety_Test extends WP_UnitTestCase {
 	// -- 'paid' path -----------------------------------------------------
 
 	public function test_marking_paid_does_not_touch_the_wallet() {
+		// Payment proof has its own tests; this one is about the ledger.
+		add_filter( 'woo_wallet_withdrawal_require_payment_proof', '__return_false' );
 		$id              = $this->create_pending_request( 100 );
 		$balance_before  = $this->balance();
 
@@ -82,6 +84,8 @@ class Admin_Process_Money_Safety_Test extends WP_UnitTestCase {
 	}
 
 	public function test_two_admins_racing_to_mark_paid_only_one_wins() {
+		// Payment proof has its own tests; this one is about the ledger.
+		add_filter( 'woo_wallet_withdrawal_require_payment_proof', '__return_false' );
 		$id = $this->create_pending_request( 100 );
 
 		// Simulate the race directly: the real safety is the atomic

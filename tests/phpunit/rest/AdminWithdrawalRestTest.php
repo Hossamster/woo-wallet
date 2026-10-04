@@ -53,6 +53,26 @@ class Admin_Withdrawal_Rest_Test extends WP_Test_REST_TestCase {
 		return $response->get_data()['id'];
 	}
 
+	private function wallet_receipt_upload() {
+		$id = self::factory()->attachment->create_upload_object( DIR_TESTDATA . '/images/one-blue-pixel-100x100.png' );
+		update_post_meta( $id, Woo_Wallet_Withdrawal::RECEIPT_UPLOAD_META, $this->admin_id );
+		return $id;
+	}
+
+	public function test_marking_paid_without_a_reference_number_and_receipt_is_refused() {
+		$id = $this->create_pending_request_via_backend( 50 );
+		wp_set_current_user( $this->admin_id );
+		$request = new WP_REST_Request( 'POST', "/terawallet/v1/admin/withdrawals/{$id}/process" );
+		$request->set_header( 'Idempotency-Key', 'proof' );
+		$request->set_param( 'action', 'paid' );
+
+		$response = $this->dispatch( $request );
+
+		$this->assertSame( 409, $response->get_status() );
+		$this->assertStringContainsString( 'reference number', $response->as_error()->get_error_message() );
+		$this->assertSame( 'pending', Woo_Wallet_Withdrawal::get_request( $id )->status );
+	}
+
 	private function balance() {
 		return (float) woo_wallet()->wallet->get_wallet_balance( $this->customer_id, 'edit' );
 	}
@@ -295,7 +315,9 @@ class Admin_Withdrawal_Rest_Test extends WP_Test_REST_TestCase {
 		$process = new WP_REST_Request( 'POST', "/terawallet/v1/admin/withdrawals/{$paid_id}/process" );
 		$process->set_header( 'Idempotency-Key', 'k1' );
 		$process->set_param( 'action', 'paid' );
-		$this->dispatch( $process );
+		$process->set_param( 'reference_no', 'TRX-1' );
+		$process->set_param( 'receipt_id', $this->wallet_receipt_upload() );
+		$this->assertSame( 200, $this->dispatch( $process )->get_status() );
 
 		$this->create_pending_request_via_backend( 60 ); // stays pending.
 

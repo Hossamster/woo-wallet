@@ -30,6 +30,13 @@ if ( ! class_exists( 'Woo_Wallet_Audit' ) ) {
 		const EVENT_CASHBACK_CHANGED    = 'cashback_changed';
 		const EVENT_STAFF_CHANGED       = 'staff_changed';
 		const EVENT_LARGE_CONFIRMED     = 'large_adjustment_confirmed';
+		const EVENT_WITHDRAWAL_EDITED   = 'withdrawal_edited';
+
+		/**
+		 * The bank details of an already-paid withdrawal were changed — the
+		 * edit that could disguise where money actually went.
+		 */
+		const EVENT_PAID_BANK_DETAILS_CHANGED = 'paid_withdrawal_bank_details_changed';
 
 		/**
 		 * Ledger categories that are a person changing a balance by hand.
@@ -73,7 +80,7 @@ if ( ! class_exists( 'Woo_Wallet_Audit' ) ) {
 		public static function alert_events() {
 			return (array) apply_filters(
 				'woo_wallet_audit_alert_events',
-				array( self::EVENT_SELF_ADJUSTMENT, self::EVENT_TRANSACTION_DELETED, self::EVENT_TRANSACTION_EDITED, self::EVENT_TRANSACTIONS_PURGED )
+				array( self::EVENT_SELF_ADJUSTMENT, self::EVENT_TRANSACTION_DELETED, self::EVENT_TRANSACTION_EDITED, self::EVENT_TRANSACTIONS_PURGED, self::EVENT_PAID_BANK_DETAILS_CHANGED )
 			);
 		}
 
@@ -91,6 +98,8 @@ if ( ! class_exists( 'Woo_Wallet_Audit' ) ) {
 				self::EVENT_CASHBACK_CHANGED    => __( 'Changed a cashback rule', 'woo-wallet' ),
 				self::EVENT_STAFF_CHANGED       => __( 'Changed staff access', 'woo-wallet' ),
 				self::EVENT_LARGE_CONFIRMED     => __( 'Confirmed a large adjustment', 'woo-wallet' ),
+				self::EVENT_WITHDRAWAL_EDITED   => __( 'Edited a withdrawal', 'woo-wallet' ),
+				self::EVENT_PAID_BANK_DETAILS_CHANGED => __( 'Changed the bank details of a paid withdrawal', 'woo-wallet' ),
 			);
 		}
 

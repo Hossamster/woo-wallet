@@ -341,7 +341,9 @@ class Staff_Oversight_Test extends WP_UnitTestCase {
 		$this->assertStringContainsString( '1234567890', $html, 'Full bank details.' );
 		$this->assertStringContainsString( 'Process this request', $html );
 
-		$processed = Woo_Wallet_Withdrawal::admin_process( $result['id'], 'paid', $accountant, 'TRX-1' );
+		$receipt = self::factory()->attachment->create_upload_object( DIR_TESTDATA . '/images/one-blue-pixel-100x100.png' );
+		update_post_meta( $receipt, Woo_Wallet_Withdrawal::RECEIPT_UPLOAD_META, $accountant );
+		$processed = Woo_Wallet_Withdrawal::admin_process( $result['id'], 'paid', $accountant, 'TRX-1', $receipt );
 		$this->assertTrue( $processed['is_valid'] );
 
 		Woo_Wallet_Staff::remove_accountant( $accountant );

@@ -52,6 +52,7 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 		const CAP_APPROVE_REQUESTS    = 'woo_wallet_approve_requests';
 		const CAP_DELETE_LOGS         = 'woo_wallet_delete_logs';
 		const CAP_MANAGE_CASHBACK     = 'woo_wallet_manage_cashback';
+		const CAP_EDIT_WITHDRAWALS    = 'woo_wallet_edit_withdrawals';
 
 		/**
 		 * Option: the support agent levels (see get_levels()).
@@ -311,6 +312,7 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 				self::CAP_EXPORT,
 				self::CAP_MANAGE_STAFF,
 				self::CAP_APPROVE_REQUESTS,
+				self::CAP_EDIT_WITHDRAWALS,
 			);
 		}
 
@@ -1156,6 +1158,7 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 				array( 'label' => __( 'Bank account numbers and IBANs', 'woo-wallet' ), 'accountant' => $yes, 'cap' => self::CAP_VIEW_BANK_DETAILS, 'no_text' => __( 'Last 4 digits only', 'woo-wallet' ) ),
 				array( 'label' => __( 'Open transfer receipts', 'woo-wallet' ), 'accountant' => $yes, 'cap' => self::CAP_VIEW_RECEIPTS ),
 				array( 'label' => __( 'Mark withdrawals paid or reject them', 'woo-wallet' ), 'accountant' => $yes, 'agents' => $no ),
+				array( 'label' => __( 'Edit withdrawal details and receipts, also after payment', 'woo-wallet' ), 'agents' => $no ),
 				array( 'label' => __( 'Approve requests', 'woo-wallet' ), 'agents' => $no ),
 				array( 'label' => __( 'Export to CSV', 'woo-wallet' ), 'accountant' => $yes, 'agents' => $no ),
 				array( 'label' => __( 'Manage support agents and levels', 'woo-wallet' ), 'agents' => $no ),

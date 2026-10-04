@@ -182,7 +182,7 @@ class Receipt_Privacy_Test extends WP_UnitTestCase {
 		$this->assertTrue( Woo_Wallet_Withdrawal::receipt_dir_misconfigured() );
 
 		$id     = $this->create_pending_request();
-		$result = Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, '', $this->create_receipt_upload() );
+		$result = Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, 'REF-TEST', $this->create_receipt_upload() );
 		$this->assertTrue( $result['is_valid'] );
 		$this->assertNotNull( Woo_Wallet_Withdrawal::resolve_receipt_file( Woo_Wallet_Withdrawal::get_request( $id ) ) );
 	}
@@ -261,7 +261,7 @@ class Receipt_Privacy_Test extends WP_UnitTestCase {
 		$attachment_id = $this->create_receipt_upload();
 		$original_hash = hash_file( 'sha256', get_attached_file( $attachment_id ) );
 		$id            = $this->create_pending_request();
-		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, '', $attachment_id );
+		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, 'REF-TEST', $attachment_id );
 
 		add_filter( 'terawallet_rest_receipt_serve_file', '__return_false' );
 
@@ -310,7 +310,7 @@ class Receipt_Privacy_Test extends WP_UnitTestCase {
 	public function test_receipts_are_written_to_the_private_dir_when_one_is_configured() {
 		$external = $this->use_external_dir();
 		$id       = $this->create_pending_request();
-		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, '', $this->create_receipt_upload() );
+		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, 'REF-TEST', $this->create_receipt_upload() );
 
 		$row  = Woo_Wallet_Withdrawal::get_request( $id );
 		$file = Woo_Wallet_Withdrawal::resolve_receipt_file( $row );
@@ -321,7 +321,7 @@ class Receipt_Privacy_Test extends WP_UnitTestCase {
 
 	public function test_a_receipt_stored_in_the_fallback_dir_still_resolves_after_a_private_dir_is_added() {
 		$id = $this->create_pending_request();
-		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, '', $this->create_receipt_upload() );
+		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, 'REF-TEST', $this->create_receipt_upload() );
 
 		$this->use_external_dir();
 
@@ -335,7 +335,7 @@ class Receipt_Privacy_Test extends WP_UnitTestCase {
 		$original_path = get_attached_file( $attachment_id );
 		$id            = $this->create_pending_request();
 
-		$result = Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, '', $attachment_id );
+		$result = Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, 'REF-TEST', $attachment_id );
 
 		$this->assertFalse( $result['is_valid'] );
 		$this->assertNotNull( get_post( $attachment_id ), 'An attachment the wallet did not upload must never be deleted.' );
@@ -414,12 +414,12 @@ class Receipt_Privacy_Test extends WP_UnitTestCase {
 
 	public function test_a_lost_race_leaves_the_upload_alone_and_no_stray_copy_behind() {
 		$id = $this->create_pending_request();
-		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id );
+		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, 'REF-TEST', $this->create_receipt_upload( 'one-blue-pixel-1-100x100.png' ) );
 
 		$attachment_id = $this->create_receipt_upload();
 		$before        = glob( trailingslashit( Woo_Wallet_Withdrawal::fallback_receipt_dir() ) . '*.png' );
 
-		$result = Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, '', $attachment_id );
+		$result = Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, 'REF-TEST', $attachment_id );
 
 		$this->assertFalse( $result['is_valid'] );
 		$this->assertTrue( $result['receipt_orphaned'] );
@@ -530,7 +530,7 @@ class Receipt_Privacy_Test extends WP_UnitTestCase {
 	public function test_retention_sweep_deletes_the_stored_file_and_clears_the_key() {
 		global $wpdb;
 		$id = $this->create_pending_request();
-		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, '', $this->create_receipt_upload() );
+		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->admin_id, 'REF-TEST', $this->create_receipt_upload() );
 		$file = Woo_Wallet_Withdrawal::resolve_receipt_file( Woo_Wallet_Withdrawal::get_request( $id ) );
 		$this->assertFileExists( $file['path'] );
 
