@@ -1279,13 +1279,17 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 						</td>
 					</tr>
 					<?php
-					$ww_enabled = Woo_Wallet_Security::bank_details_encryption_enabled( (bool) apply_filters( 'woo_wallet_encrypt_bank_details', false ) );
+					$ww_enabled = (bool) apply_filters( 'woo_wallet_encrypt_bank_details', false );
+					$ww_forced  = $ww_enabled && 'yes' !== get_option( Woo_Wallet_Security::ENABLED_OPTION, 'no' );
 					$ww_has_key = 'v2' === Woo_Wallet_Security::current_version();
 					?>
 					<tr>
 						<th><?php esc_html_e( 'Encrypt bank details', 'woo-wallet' ); ?></th>
 						<td>
-							<label><input type="checkbox" name="encrypt_bank_details" value="1" <?php checked( $ww_enabled ); ?> <?php disabled( ! $ww_enabled && ! $ww_has_key ); ?> /> <?php esc_html_e( 'Store account numbers and IBANs on withdrawal requests encrypted', 'woo-wallet' ); ?></label>
+							<label><input type="checkbox" name="encrypt_bank_details" value="1" <?php checked( $ww_enabled ); ?> <?php disabled( $ww_forced || ( ! $ww_enabled && ! $ww_has_key ) ); ?> /> <?php esc_html_e( 'Store account numbers and IBANs on withdrawal requests encrypted', 'woo-wallet' ); ?></label>
+							<?php if ( $ww_forced ) : ?>
+								<p class="description"><?php esc_html_e( 'Turned on in the site\'s code (the woo_wallet_encrypt_bank_details filter), so it cannot be switched off here.', 'woo-wallet' ); ?></p>
+							<?php endif; ?>
 							<?php if ( ! $ww_has_key && ! $ww_enabled ) : ?>
 								<p class="description" style="color:#8a4b00;"><?php esc_html_e( 'Needs a dedicated key first: add WOO_WALLET_ENCRYPTION_KEY to wp-config.php (see "Encryption key" below) and keep a copy of it somewhere safe. Without it, encryption would depend on the WordPress security keys, which hosts and security plugins regenerate — making the data unreadable.', 'woo-wallet' ); ?></p>
 							<?php elseif ( ! $ww_has_key && $ww_enabled ) : ?>
@@ -1410,7 +1414,10 @@ if ( ! class_exists( 'Woo_Wallet_Staff' ) ) {
 		 */
 		public static function save_safeguards( $threshold, $encrypt ) {
 			update_option( self::LARGE_THRESHOLD_OPTION, max( 0.0, (float) $threshold ), false );
-			$already = 'yes' === get_option( Woo_Wallet_Security::ENABLED_OPTION, 'no' );
+			// Already on — by this setting or by the woo_wallet_encrypt_bank_details
+			// filter in the site's code — means there is nothing to turn on, so
+			// saving the other settings must not raise the key requirement.
+			$already = (bool) apply_filters( 'woo_wallet_encrypt_bank_details', false );
 			if ( $encrypt && ! $already ) {
 				if ( 'v2' !== Woo_Wallet_Security::current_version() ) {
 					return new WP_Error( 'woo_wallet_encryption_key_required', __( 'Add WOO_WALLET_ENCRYPTION_KEY to wp-config.php (and keep a copy of it somewhere safe) before turning encryption on. The other settings were saved.', 'woo-wallet' ) );

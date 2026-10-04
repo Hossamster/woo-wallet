@@ -239,4 +239,89 @@ class Withdrawal_Proof_Edit_Charge_Test extends WP_UnitTestCase {
 		$this->assertSame( 20.0, (float) Woo_Wallet_Withdrawal::get_request( $id )->charge );
 		$this->assertSame( $before - 100020, $this->balance() );
 	}
+
+	// -- review fixes -----------------------------------------------------------------------
+
+	public function test_a_leftover_cap_does_not_undercut_a_fixed_charge() {
+		$this->set_charge( 'fixed', 30, 20 );
+		$this->assertSame( 30.0, Woo_Wallet_Withdrawal::calculate_charge( 5000 ) );
+
+		$before = $this->balance();
+		$id     = $this->pending( 5000 );
+		$this->assertSame( 30.0, (float) Woo_Wallet_Withdrawal::get_request( $id )->charge );
+		$this->assertSame( $before - 5030, $this->balance() );
+	}
+
+	public function test_the_charge_is_rounded_so_the_stored_total_matches_the_ledger() {
+		$this->set_charge( 'percent', 2.5, 0 );
+		$this->assertSame( 0.83, Woo_Wallet_Withdrawal::calculate_charge( 33.33 ) );
+
+		$before = $this->balance();
+		$id     = $this->pending( 33.33 );
+		$row    = Woo_Wallet_Withdrawal::get_request( $id );
+		$this->assertSame( 0.83, (float) $row->charge );
+		$this->assertSame( round( $before - 34.16, 2 ), round( $this->balance(), 2 ) );
+		$this->assertSame( 34.16, round( (float) $row->amount + (float) $row->charge, 8 ) );
+	}
+
+	public function test_an_edit_cannot_save_an_invalid_iban() {
+		$id     = $this->pending();
+		$result = Woo_Wallet_Withdrawal::admin_edit( $id, array( 'iban' => 'EG3800190005000000002631800' ), 0, $this->manager_id );
+		$this->assertFalse( $result['is_valid'] );
+		$this->assertStringContainsString( 'IBAN', $result['message'] );
+	}
+
+	public function test_an_edit_cannot_set_a_bank_outside_the_configured_list() {
+		$id     = $this->pending();
+		$result = Woo_Wallet_Withdrawal::admin_edit( $id, array( 'bank_name' => 'cib bank' ), 0, $this->manager_id );
+		$this->assertFalse( $result['is_valid'] );
+
+		$banks = array_keys( Woo_Wallet_Withdrawal::get_configured_banks() );
+		$this->assertTrue( Woo_Wallet_Withdrawal::admin_edit( $id, array( 'bank_name' => end( $banks ) ), 0, $this->manager_id )['is_valid'] );
+	}
+
+	public function test_an_older_free_text_bank_can_stay_while_other_fields_are_corrected() {
+		global $wpdb;
+		$id = $this->pending();
+		$wpdb->update( $wpdb->base_prefix . 'woo_wallet_withdrawals', array( 'bank_name' => 'Some old bank' ), array( 'id' => $id ) );
+
+		$result = Woo_Wallet_Withdrawal::admin_edit( $id, array( 'bank_name' => 'Some old bank', 'phone' => '01099998888' ), 0, $this->manager_id );
+		$this->assertTrue( $result['is_valid'], $result['message'] );
+	}
+
+	public function test_staff_logging_a_withdrawal_with_an_invalid_iban_is_refused() {
+		$result = Woo_Wallet_Withdrawal::admin_create( $this->customer_id, 100, array_key_first( Woo_Wallet_Withdrawal::get_configured_banks() ), 'Mohamed Ali', '1234567890', '01012345678', 'EG12', $this->manager_id, 'pending' );
+		$this->assertFalse( $result['is_valid'] );
+	}
+
+	public function test_a_reference_number_already_on_the_request_counts_when_marking_paid() {
+		$id = $this->pending();
+		Woo_Wallet_Withdrawal::admin_edit( $id, array( 'reference_no' => 'TRX-55' ), 0, $this->manager_id );
+
+		$result = Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->manager_id, '', $this->receipt() );
+
+		$this->assertTrue( $result['is_valid'], $result['message'] );
+		$this->assertSame( 'TRX-55', Woo_Wallet_Withdrawal::get_request( $id )->reference_no );
+	}
+
+	public function test_a_new_account_with_the_same_last_four_digits_is_called_out() {
+		global $wpdb;
+		$id = $this->pending();
+		$wpdb->update( $wpdb->base_prefix . 'woo_wallet_withdrawals', array( 'account_number' => '1000200030001234' ), array( 'id' => $id ) );
+		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->manager_id, 'TRX-1', $this->receipt() );
+
+		Woo_Wallet_Withdrawal::admin_edit( $id, array( 'account_number' => '9999888877771234' ), 0, $this->manager_id );
+
+		$notes = implode( "\n", wp_list_pluck( Woo_Wallet_Withdrawal::get_notes( $id ), 'note' ) );
+		$this->assertStringContainsString( 'a different number with the same last 4 digits', $notes );
+		$this->assertMatchesRegularExpression( '/1234 #([0-9a-f]{6}) → \S+1234 #(?!\1)[0-9a-f]{6}/u', $notes );
+		$this->assertStringNotContainsString( '9999888877771234', $notes );
+		$this->assertStringNotContainsString( '1000200030001234', $notes );
+	}
+
+	public function test_an_approval_request_with_an_invalid_iban_is_refused_up_front() {
+		wp_set_current_user( self::factory()->user->create( array( 'role' => Woo_Wallet_Staff::ROLE ) ) );
+		$result = Woo_Wallet_Approvals::create( 'withdrawal', $this->customer_id, 10, array( 'bank_name' => 'Bank', 'beneficiary_name' => 'X', 'account_number' => '123', 'phone' => '01012345678', 'iban' => 'EG12' ), '' );
+		$this->assertSame( 'woo_wallet_approval_iban', $result->get_error_code() );
+	}
 }

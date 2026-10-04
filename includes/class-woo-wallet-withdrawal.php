@@ -566,10 +566,10 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			}
 
 			$iban = strtoupper( preg_replace( '/\s+/', '', (string) $iban ) );
-			if ( '' !== $iban && ! apply_filters( 'woo_wallet_is_valid_egyptian_iban', (bool) preg_match( '/^EG\d{27}$/', $iban ), $iban ) ) {
+			if ( ! self::is_valid_iban( $iban ) ) {
 				return array(
 					'is_valid' => false,
-					'message'  => __( 'Please enter a valid Egyptian IBAN (starts with EG, 29 characters) or leave it blank.', 'woo-wallet' ),
+					'message'  => self::invalid_iban_message(),
 				);
 			}
 
@@ -617,8 +617,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @return array {is_valid, message, id, charge}
 		 */
 		private static function reserve_and_insert( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, $iban, $created_by, $status = 'pending', $reference_no = '' ) {
+			$amount        = round( (float) $amount, wc_get_price_decimals() );
 			$charge        = self::calculate_charge( $amount, $user_id );
-			$debit_amount  = $amount + $charge;
+			$debit_amount  = round( $amount + $charge, wc_get_price_decimals() );
 
 			$current_balance = woo_wallet()->wallet->get_wallet_balance( $user_id, 'edit' );
 			if ( $current_balance <= 0 || $debit_amount > $current_balance ) {
@@ -2082,6 +2083,28 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
+		 * Whether an IBAN is acceptable: empty (it is optional), or a valid
+		 * Egyptian IBAN. The same rule for a customer's own request, a request
+		 * staff log for them, and a correction made later.
+		 *
+		 * @param string $iban Normalised IBAN (upper case, no spaces).
+		 * @return bool
+		 */
+		public static function is_valid_iban( $iban ) {
+			$iban = (string) $iban;
+			return '' === $iban || (bool) apply_filters( 'woo_wallet_is_valid_egyptian_iban', (bool) preg_match( '/^EG\d{27}$/', $iban ), $iban );
+		}
+
+		/**
+		 * The message for an invalid IBAN.
+		 *
+		 * @return string
+		 */
+		public static function invalid_iban_message() {
+			return __( 'Please enter a valid Egyptian IBAN (starts with EG, 29 characters) or leave it blank.', 'woo-wallet' );
+		}
+
+		/**
 		 * Whether marking a withdrawal paid needs the bank transfer's
 		 * reference number and receipt. On by default: without them there is
 		 * no record of where the money actually went.
@@ -2137,10 +2160,17 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			$charge_amount = (float) $settings->get_option( 'withdrawal_charge_amount', '_wallet_settings_withdrawal', 0 );
 			$charge_max    = (float) $settings->get_option( 'withdrawal_charge_max', '_wallet_settings_withdrawal', 0 );
 			$charge        = 'percent' === $charge_type ? ( (float) $amount * $charge_amount ) / 100 : $charge_amount;
-			if ( $charge_max > 0 && $charge > $charge_max ) {
+			// The cap belongs to a percentage charge only: the field is hidden
+			// for a fixed charge, so a value left over from when the charge was
+			// a percentage must not silently undercut the fixed amount shown.
+			if ( 'percent' === $charge_type && $charge_max > 0 && $charge > $charge_max ) {
 				$charge = $charge_max;
 			}
-			return (float) apply_filters( 'woo_wallet_withdrawal_charge_amount', $charge, $user_id, $amount );
+			$charge = (float) apply_filters( 'woo_wallet_withdrawal_charge_amount', $charge, $user_id, $amount );
+			// Rounded to the store's price decimals, so the charge stored on
+			// the request is exactly what was taken from the wallet and a column
+			// total in an export matches the ledger to the cent.
+			return round( max( 0.0, $charge ), wc_get_price_decimals() );
 		}
 
 		/**
@@ -2506,7 +2536,26 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 								<?php foreach ( self::editable_fields() as $ww_key => $ww_label ) : ?>
 									<tr>
 										<th><label for="ww-edit-<?php echo esc_attr( $ww_key ); ?>"><?php echo esc_html( $ww_label ); ?></label></th>
-										<td><input type="text" id="ww-edit-<?php echo esc_attr( $ww_key ); ?>" name="<?php echo esc_attr( $ww_key ); ?>" class="regular-text" value="<?php echo esc_attr( (string) $request->$ww_key ); ?>" /></td>
+										<td>
+											<?php if ( 'bank_name' === $ww_key ) : ?>
+												<?php $ww_banks = self::get_configured_banks(); ?>
+												<select id="ww-edit-bank_name" name="bank_name">
+													<?php if ( ! isset( $ww_banks[ $request->bank_name ] ) ) : ?>
+														<option value="<?php echo esc_attr( $request->bank_name ); ?>" selected>
+															<?php
+															/* translators: %s: bank name */
+															echo esc_html( sprintf( __( '%s (not in the bank list)', 'woo-wallet' ), $request->bank_name ) );
+															?>
+														</option>
+													<?php endif; ?>
+													<?php foreach ( $ww_banks as $ww_bank ) : ?>
+														<option value="<?php echo esc_attr( $ww_bank ); ?>" <?php selected( $request->bank_name, $ww_bank ); ?>><?php echo esc_html( $ww_bank ); ?></option>
+													<?php endforeach; ?>
+												</select>
+											<?php else : ?>
+												<input type="text" id="ww-edit-<?php echo esc_attr( $ww_key ); ?>" name="<?php echo esc_attr( $ww_key ); ?>" class="regular-text" value="<?php echo esc_attr( (string) $request->$ww_key ); ?>" <?php echo 'iban' === $ww_key ? 'pattern="[Ee][Gg][0-9 ]{27,40}" title="' . esc_attr( self::invalid_iban_message() ) . '"' : ''; ?> />
+											<?php endif; ?>
+										</td>
 									</tr>
 								<?php endforeach; ?>
 								<tr>
@@ -2727,6 +2776,13 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					'message'  => __( 'Please enter a valid contact phone number.', 'woo-wallet' ),
 				);
 			}
+			$iban = strtoupper( preg_replace( '/\s+/', '', (string) $iban ) );
+			if ( ! self::is_valid_iban( $iban ) ) {
+				return array(
+					'is_valid' => false,
+					'message'  => self::invalid_iban_message(),
+				);
+			}
 
 			if ( 'paid' === $status ) {
 				$proof = self::check_payment_proof( $reference_no, (bool) $receipt_id );
@@ -2876,6 +2932,23 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					'receipt_orphaned' => (bool) $receipt_id,
 				);
 			}
+			if ( $new['iban'] !== (string) $request->iban && ! self::is_valid_iban( $new['iban'] ) ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => self::invalid_iban_message(),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+			// A corrected bank must be one of the configured banks (as on the
+			// customer's own form), so the list's bank filter still finds the
+			// request. Leaving an older free-text bank as it is stays allowed.
+			if ( $new['bank_name'] !== (string) $request->bank_name && ! isset( self::get_configured_banks()[ $new['bank_name'] ] ) ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'Choose the bank from the list of configured banks.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
 			if ( 'paid' === $request->status ) {
 				$proof = self::check_payment_proof( $new['reference_no'], true );
 				if ( is_wp_error( $proof ) ) {
@@ -2957,10 +3030,23 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			$lines  = array();
 			$logged = array();
 			foreach ( $changes as $key => $change ) {
-				$lines[]        = sprintf( '%s: %s → %s', $labels[ $key ], $show( $key, $change['from'] ), $show( $key, $change['to'] ) );
+				$from = $show( $key, $change['from'] );
+				$to   = $show( $key, $change['to'] );
+				if ( $from === $to ) {
+					// A different number that happens to end in the same four
+					// digits — exactly the change someone hiding a redirected
+					// payment would make. Say so, with a short fingerprint of
+					// each (not more digits) so the two can be told apart.
+					$fingerprint = function ( $value ) {
+						return substr( hash_hmac( 'sha256', $value, wp_salt( 'auth' ) ), 0, 6 );
+					};
+					$from .= ' #' . $fingerprint( $change['from'] );
+					$to   .= ' #' . $fingerprint( $change['to'] ) . ' ' . __( '(a different number with the same last 4 digits)', 'woo-wallet' );
+				}
+				$lines[]        = sprintf( '%s: %s → %s', $labels[ $key ], $from, $to );
 				$logged[ $key ] = array(
-					'from' => $show( $key, $change['from'] ),
-					'to'   => $show( $key, $change['to'] ),
+					'from' => $from,
+					'to'   => $to,
 				);
 			}
 			if ( $receipt_key ) {
@@ -3178,7 +3264,10 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				);
 			}
 			if ( 'paid' === $action ) {
-				$proof = self::check_payment_proof( $reference_no, $receipt_id || self::has_receipt( $request ) );
+				// A reference number already recorded on the request (e.g. via
+				// Edit details while waiting for the receipt) counts, just as an
+				// already-attached receipt does.
+				$proof = self::check_payment_proof( '' !== trim( (string) $reference_no ) ? $reference_no : (string) $request->reference_no, $receipt_id || self::has_receipt( $request ) );
 				if ( is_wp_error( $proof ) ) {
 					return array(
 						'is_valid'         => false,

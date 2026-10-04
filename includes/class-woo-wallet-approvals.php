@@ -158,6 +158,9 @@ if ( ! class_exists( 'Woo_Wallet_Approvals' ) ) {
 				if ( strlen( $payload['phone'] ) < 8 ) {
 					return new WP_Error( 'woo_wallet_approval_phone', __( 'Please enter a valid contact phone number.', 'woo-wallet' ) );
 				}
+				if ( ! Woo_Wallet_Withdrawal::is_valid_iban( $payload['iban'] ) ) {
+					return new WP_Error( 'woo_wallet_approval_iban', Woo_Wallet_Withdrawal::invalid_iban_message() );
+				}
 				// A request can wait a long time for a decision — keep bank
 				// details encrypted at rest regardless of the site-wide setting.
 				$payload['account_number'] = Woo_Wallet_Security::encrypt( $payload['account_number'] );

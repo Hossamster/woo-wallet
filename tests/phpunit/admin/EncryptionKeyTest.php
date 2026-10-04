@@ -209,6 +209,27 @@ class Encryption_Key_Test extends WP_UnitTestCase {
 		$this->assertSame( 'yes', get_option( Woo_Wallet_Security::ENABLED_OPTION ) );
 	}
 
+	/**
+	 * Encryption turned on by a developer's filter, with no dedicated key:
+	 * saving an unrelated setting must not report the key requirement.
+	 */
+	public function test_saving_other_settings_with_encryption_on_in_code_raises_no_error() {
+		add_filter( 'woo_wallet_encrypt_bank_details', '__return_true' );
+
+		$this->assertTrue( Woo_Wallet_Staff::save_safeguards( 10000, true ) );
+		$this->assertTrue( Woo_Wallet_Staff::save_safeguards( 10000, false ), 'The box is disabled, so it arrives unticked.' );
+		$this->assertSame( 10000.0, Woo_Wallet_Staff::large_threshold() );
+
+		wp_set_current_user( $this->admin_id );
+		$_GET = array( 'page' => 'woo-wallet-staff', 'tab' => 'safeguards' );
+		ob_start();
+		( new Woo_Wallet_Staff() )->render_page();
+		$html = ob_get_clean();
+		$_GET = array();
+		$this->assertStringContainsString( 'Turned on in the site', $html );
+		$this->assertMatchesRegularExpression( '/name="encrypt_bank_details"[^>]*checked[^>]*disabled/', $html );
+	}
+
 	public function test_the_checkbox_is_disabled_until_the_key_exists() {
 		wp_set_current_user( $this->admin_id );
 		$_GET = array( 'page' => 'woo-wallet-staff', 'tab' => 'safeguards' );
