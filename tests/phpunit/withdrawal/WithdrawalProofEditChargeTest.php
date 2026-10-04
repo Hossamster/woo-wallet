@@ -324,4 +324,240 @@ class Withdrawal_Proof_Edit_Charge_Test extends WP_UnitTestCase {
 		$result = Woo_Wallet_Approvals::create( 'withdrawal', $this->customer_id, 10, array( 'bank_name' => 'Bank', 'beneficiary_name' => 'X', 'account_number' => '123', 'phone' => '01012345678', 'iban' => 'EG12' ), '' );
 		$this->assertSame( 'woo_wallet_approval_iban', $result->get_error_code() );
 	}
+
+	// -- concurrency, atomicity, retention, ledger protection ----------------------------------
+
+	public function test_an_edit_from_a_stale_page_cannot_put_old_values_back() {
+		$id        = $this->paid();
+		$opened_at = (int) Woo_Wallet_Withdrawal::get_request( $id )->revision;
+
+		// Sara corrects the account while Ali still has the old page open.
+		$sara = Woo_Wallet_Withdrawal::admin_edit( $id, array( 'account_number' => '5555666677778888' ), 0, $this->manager_id, $opened_at );
+		$this->assertTrue( $sara['is_valid'], $sara['message'] );
+
+		// Ali's form still carries the old account number and the old revision.
+		$ali = Woo_Wallet_Withdrawal::admin_edit( $id, array( 'account_number' => '1234567890', 'phone' => '01099998888' ), 0, $this->other_admin_id, $opened_at );
+
+		$this->assertFalse( $ali['is_valid'] );
+		$this->assertStringContainsString( 'Reload the page', $ali['message'] );
+		$row = Woo_Wallet_Withdrawal::get_request( $id );
+		$this->assertSame( '5555666677778888', $row->account_number, 'Sara\'s correction survives.' );
+		$this->assertSame( '01012345678', $row->phone, 'Nothing of Ali\'s edit was applied.' );
+
+		// After reloading he can edit again.
+		$reloaded = (int) $row->revision;
+		$this->assertTrue( Woo_Wallet_Withdrawal::admin_edit( $id, array( 'phone' => '01099998888' ), 0, $this->other_admin_id, $reloaded )['is_valid'] );
+		$this->assertSame( '5555666677778888', Woo_Wallet_Withdrawal::get_request( $id )->account_number );
+	}
+
+	public function test_a_status_change_also_invalidates_an_open_edit_form() {
+		$id        = $this->pending();
+		$opened_at = (int) Woo_Wallet_Withdrawal::get_request( $id )->revision;
+
+		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->manager_id, 'TRX-9', $this->receipt() );
+		$result = Woo_Wallet_Withdrawal::admin_edit( $id, array( 'reference_no' => '' ), 0, $this->manager_id, $opened_at );
+
+		$this->assertFalse( $result['is_valid'] );
+		$this->assertSame( 'TRX-9', Woo_Wallet_Withdrawal::get_request( $id )->reference_no );
+	}
+
+	public function test_the_edit_form_carries_the_revision_it_was_opened_with() {
+		$id = $this->paid();
+		wp_set_current_user( $this->manager_id );
+		$html = $this->render_detail( $id );
+		$this->assertStringContainsString( 'name="revision" value="' . (int) Woo_Wallet_Withdrawal::get_request( $id )->revision . '"', $html );
+	}
+
+	public function test_a_withdrawal_created_as_paid_gets_its_receipt_in_the_same_insert() {
+		global $wpdb;
+		$statements = array();
+		add_filter(
+			'query',
+			function ( $query ) use ( &$statements ) {
+				if ( false !== stripos( $query, 'woo_wallet_withdrawals' ) && preg_match( '/^\s*(INSERT|UPDATE)/i', $query ) ) {
+					$statements[] = $query;
+				}
+				return $query;
+			}
+		);
+
+		$result = Woo_Wallet_Withdrawal::admin_create( $this->customer_id, 100, array_key_first( Woo_Wallet_Withdrawal::get_configured_banks() ), 'Mohamed Ali', '1234567890', '01012345678', '', $this->manager_id, 'paid', 'TRX-7', $this->receipt() );
+
+		$this->assertTrue( $result['is_valid'], $result['message'] );
+		$row = Woo_Wallet_Withdrawal::get_request( $result['id'] );
+		$this->assertTrue( Woo_Wallet_Withdrawal::is_valid_receipt_key( $row->receipt_key ) );
+		$this->assertNotEmpty( $row->receipt_attached_at );
+		foreach ( $statements as $statement ) {
+			$this->assertDoesNotMatchRegularExpression( '/^\s*UPDATE.*receipt_key/is', $statement, 'The key must not be written by a second, separate statement.' );
+		}
+		$this->assertMatchesRegularExpression( '/^\s*INSERT.*receipt_key/is', $statements[0] );
+	}
+
+	public function test_a_request_paid_before_proof_was_required_can_still_be_edited() {
+		global $wpdb;
+		$id = $this->pending();
+		$wpdb->update( $wpdb->base_prefix . 'woo_wallet_withdrawals', array( 'status' => 'paid', 'reference_no' => '' ), array( 'id' => $id ) );
+
+		$result = Woo_Wallet_Withdrawal::admin_edit( $id, array( 'phone' => '01099998888' ), 0, $this->manager_id );
+
+		$this->assertTrue( $result['is_valid'], $result['message'] );
+		$this->assertSame( '01099998888', Woo_Wallet_Withdrawal::get_request( $id )->phone );
+	}
+
+	public function test_a_fresh_receipt_on_an_old_request_is_not_swept() {
+		global $wpdb;
+		$id = $this->pending();
+		$wpdb->update( $wpdb->base_prefix . 'woo_wallet_withdrawals', array( 'date_created' => gmdate( 'Y-m-d H:i:s', time() - ( 100 * DAY_IN_SECONDS ) ) ), array( 'id' => $id ) );
+		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->manager_id, 'TRX-1', $this->receipt() );
+		$file = Woo_Wallet_Withdrawal::resolve_receipt_file( Woo_Wallet_Withdrawal::get_request( $id ) );
+
+		( new Woo_Wallet_Withdrawal() )->cleanup_old_receipts();
+
+		$this->assertFileExists( $file['path'] );
+		$this->assertTrue( Woo_Wallet_Withdrawal::has_receipt( Woo_Wallet_Withdrawal::get_request( $id ) ) );
+
+		// Once the receipt itself is old enough, it goes.
+		$wpdb->update( $wpdb->base_prefix . 'woo_wallet_withdrawals', array( 'receipt_attached_at' => gmdate( 'Y-m-d H:i:s', time() - ( 91 * DAY_IN_SECONDS ) ) ), array( 'id' => $id ) );
+		( new Woo_Wallet_Withdrawal() )->cleanup_old_receipts();
+		$this->assertFileDoesNotExist( $file['path'] );
+	}
+
+	public function test_the_advertised_expiry_counts_from_the_receipt() {
+		global $wpdb;
+		$id = $this->pending();
+		$wpdb->update( $wpdb->base_prefix . 'woo_wallet_withdrawals', array( 'date_created' => gmdate( 'Y-m-d H:i:s', time() - ( 100 * DAY_IN_SECONDS ) ) ), array( 'id' => $id ) );
+		Woo_Wallet_Withdrawal::admin_process( $id, 'paid', $this->manager_id, 'TRX-1', $this->receipt() );
+
+		$expires = Woo_Wallet_Withdrawal::receipt_expires_timestamp( Woo_Wallet_Withdrawal::get_request( $id ) );
+
+		$this->assertEqualsWithDelta( time() + 90 * DAY_IN_SECONDS, $expires, 3600 + 120 );
+	}
+
+	public function test_rejecting_a_withdrawal_of_a_locked_wallet_returns_the_money() {
+		$before = $this->balance();
+		$id     = $this->pending( 100 );
+		update_user_meta( $this->customer_id, '_is_wallet_locked', 1 );
+
+		$result = Woo_Wallet_Withdrawal::admin_process( $id, 'reject', $this->manager_id );
+
+		$this->assertTrue( $result['is_valid'], $result['message'] );
+		$this->assertSame( 'rejected', Woo_Wallet_Withdrawal::get_request( $id )->status );
+		$this->assertSame( $before, $this->balance() );
+		// Only that: a locked wallet still takes no ordinary credit or debit.
+		$this->assertFalse( woo_wallet()->wallet->credit( $this->customer_id, 5, 'bonus' ) );
+		$this->assertFalse( woo_wallet()->wallet->credit( $this->customer_id, 5, 'bonus', array( 'category' => 'withdrawal_refund' ) ), 'The category alone is not enough.' );
+		$this->assertFalse( woo_wallet()->wallet->debit( $this->customer_id, 5, 'charge', array( 'category' => 'withdrawal_refund', 'allow_locked_wallet' => true ) ), 'And never a debit.' );
+	}
+
+	public function test_a_refund_goes_back_in_the_currency_of_the_request() {
+		global $wpdb;
+		$id = $this->pending( 100 );
+		$wpdb->update( $wpdb->base_prefix . 'woo_wallet_withdrawals', array( 'currency' => 'EUR' ), array( 'id' => $id ) );
+
+		$result = Woo_Wallet_Withdrawal::admin_process( $id, 'reject', $this->manager_id );
+		$this->assertTrue( $result['is_valid'], $result['message'] );
+
+		$refund_id = (int) Woo_Wallet_Withdrawal::get_request( $id )->refund_transaction_id;
+		$currency  = $wpdb->get_var( $wpdb->prepare( "SELECT original_currency FROM {$wpdb->base_prefix}woo_wallet_transactions WHERE transaction_id = %d", $refund_id ) );
+		$this->assertSame( 'EUR', $currency );
+	}
+
+	public function test_a_withdrawals_reservation_and_refund_cannot_be_deleted_from_the_ledger() {
+		$pending  = $this->pending( 100 );
+		$reserved = (int) Woo_Wallet_Withdrawal::get_request( $pending )->transaction_id;
+		$before   = $this->balance();
+
+		$refused = woo_wallet()->wallet->delete_transaction( $reserved, false );
+		$this->assertSame( 'woo_wallet_transaction_protected', $refused->get_error_code() );
+		$this->assertStringContainsString( '#' . $pending, $refused->get_error_message() );
+		$this->assertWPError( woo_wallet()->wallet->delete_transaction( $reserved, true ) );
+		$this->assertSame( $before, $this->balance() );
+
+		$paid = $this->paid();
+		$this->assertWPError( woo_wallet()->wallet->delete_transaction( (int) Woo_Wallet_Withdrawal::get_request( $paid )->transaction_id ) );
+
+		$rejected = $this->pending( 50 );
+		Woo_Wallet_Withdrawal::admin_process( $rejected, 'reject', $this->manager_id );
+		$row = Woo_Wallet_Withdrawal::get_request( $rejected );
+		$this->assertWPError( woo_wallet()->wallet->delete_transaction( (int) $row->transaction_id ), 'The reservation of a rejected request.' );
+		$this->assertWPError( woo_wallet()->wallet->delete_transaction( (int) $row->refund_transaction_id ), 'The refund of a rejected request.' );
+
+		// An ordinary transaction is still deletable.
+		$ordinary = woo_wallet()->wallet->credit( $this->customer_id, 1, 'ordinary' );
+		$this->assertTrue( woo_wallet()->wallet->delete_transaction( $ordinary ) );
+	}
+
+	public function test_the_rest_api_reports_a_protected_transaction_as_a_conflict() {
+		global $wp_rest_server;
+		$wp_rest_server = new Spy_REST_Server();
+		do_action( 'rest_api_init', $wp_rest_server );
+		$pending  = $this->pending( 100 );
+		$reserved = (int) Woo_Wallet_Withdrawal::get_request( $pending )->transaction_id;
+		wp_set_current_user( $this->admin_id );
+
+		$response = rest_get_server()->dispatch( new WP_REST_Request( 'DELETE', '/terawallet/v1/admin/transactions/' . $reserved ) );
+
+		$this->assertSame( 409, $response->get_status() );
+		$wp_rest_server = null;
+	}
+
+	public function test_a_user_with_a_waiting_withdrawal_cannot_be_deleted() {
+		if ( ! function_exists( 'wp_delete_user' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/user.php';
+		}
+		$id = $this->pending( 100 );
+
+		try {
+			wp_delete_user( $this->customer_id );
+			$this->fail( 'Deleting a user with a pending withdrawal must be refused.' );
+		} catch ( WPDieException $e ) {
+			$this->assertStringContainsString( 'withdrawal request still waiting', $e->getMessage() );
+		}
+		$this->assertNotFalse( get_userdata( $this->customer_id ) );
+		$this->assertSame( 'pending', Woo_Wallet_Withdrawal::get_request( $id )->status );
+
+		// Settled requests no longer stand in the way.
+		Woo_Wallet_Withdrawal::admin_process( $id, 'reject', $this->manager_id );
+		$this->assertTrue( wp_delete_user( $this->customer_id ) );
+		$this->assertFalse( get_userdata( $this->customer_id ) );
+	}
+
+	public function test_a_user_with_an_interrupted_reject_cannot_be_deleted_either() {
+		global $wpdb;
+		if ( ! function_exists( 'wp_delete_user' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/user.php';
+		}
+		$id = $this->pending( 100 );
+		$wpdb->update( $wpdb->base_prefix . 'woo_wallet_withdrawals', array( 'status' => 'processing' ), array( 'id' => $id ) );
+
+		$this->expectException( 'WPDieException' );
+		wp_delete_user( $this->customer_id );
+	}
+
+	public function test_a_paid_withdrawal_does_not_block_deleting_the_user() {
+		if ( ! function_exists( 'wp_delete_user' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/user.php';
+		}
+		$this->paid();
+		$this->assertTrue( wp_delete_user( $this->customer_id ) );
+	}
+
+	public function test_the_upgrade_backfills_when_existing_receipts_were_attached() {
+		global $wpdb;
+		require_once WOO_WALLET_ABSPATH . 'includes/helper/woo-wallet-update-functions.php';
+		$table = $wpdb->base_prefix . 'woo_wallet_withdrawals';
+		$id    = $this->paid();
+		$wpdb->update( $table, array( 'date_created' => '2026-01-01 10:00:00', 'date_updated' => '2026-01-05 12:00:00', 'receipt_attached_at' => null ), array( 'id' => $id ) );
+		$wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET receipt_attached_at = NULL WHERE id = %d", $id ) );
+		$no_receipt = $this->pending();
+		$wpdb->query( $wpdb->prepare( "UPDATE `{$table}` SET receipt_attached_at = NULL WHERE id = %d", $no_receipt ) );
+
+		// The schema half of the upgrade runs dbDelta(), whose DDL would commit
+		// this test's transaction — only the data half is exercised here.
+		$this->assertTrue( function_exists( 'woo_wallet_update_1111_withdrawal_revision_and_receipt_age' ) );
+		woo_wallet_backfill_receipt_attached_at();
+
+		$this->assertSame( '2026-01-05 12:00:00', Woo_Wallet_Withdrawal::get_request( $id )->receipt_attached_at, 'Backfilled from the last update.' );
+		$this->assertEmpty( Woo_Wallet_Withdrawal::get_request( $no_receipt )->receipt_attached_at, 'A request with no receipt is left alone.' );
+	}
 }

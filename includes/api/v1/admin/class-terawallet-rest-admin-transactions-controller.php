@@ -343,7 +343,7 @@ class TeraWallet_REST_Admin_Transactions_Controller extends TeraWallet_REST_Admi
 		$hard = ! empty( $request['force'] );
 		$ok   = woo_wallet()->wallet->delete_transaction( $id, $hard );
 		if ( is_wp_error( $ok ) ) {
-			$code = 'woo_wallet_transaction_not_found' === $ok->get_error_code() ? 404 : 400;
+			$code = 'woo_wallet_transaction_not_found' === $ok->get_error_code() ? 404 : ( 'woo_wallet_transaction_protected' === $ok->get_error_code() ? 409 : 400 );
 			return $this->error( $ok->get_error_code(), $ok->get_error_message(), $code );
 		}
 		return new WP_REST_Response( array( 'deleted' => true, 'id' => $id, 'force' => $hard ), 200 );

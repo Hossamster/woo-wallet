@@ -80,6 +80,9 @@ class Woo_Wallet_Install {
 			'woo_wallet_update_1110_audit_log',
 			'woo_wallet_update_1110_widen_iban',
 		),
+		'1.11.1' => array(
+			'woo_wallet_update_1111_withdrawal_revision_and_receipt_age',
+		),
 	);
 	/**
 	 * Plugin install
@@ -264,6 +267,8 @@ class Woo_Wallet_Install {
             reference_no varchar(191 ) NOT NULL DEFAULT '',
             receipt_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
             receipt_key varchar(64 ) NOT NULL DEFAULT '',
+            receipt_attached_at datetime NULL,
+            revision int(10) unsigned NOT NULL DEFAULT 0,
             refund_transaction_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
             status varchar(20 ) NOT NULL DEFAULT 'pending',
             admin_note text NULL,

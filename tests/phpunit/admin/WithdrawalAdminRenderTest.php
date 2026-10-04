@@ -180,7 +180,8 @@ class Withdrawal_Admin_Render_Test extends WP_UnitTestCase {
 			require_once ABSPATH . 'wp-admin/includes/user.php';
 		}
 		$deleted_user_id = self::factory()->user->create();
-		$row             = $this->seed_request( array( 'user_id' => $deleted_user_id, 'created_by' => $deleted_user_id ) );
+		// Settled (a user with a waiting request cannot be deleted at all).
+		$row             = $this->seed_request( array( 'user_id' => $deleted_user_id, 'created_by' => $deleted_user_id, 'status' => 'rejected' ) );
 		wp_delete_user( $deleted_user_id );
 
 		$table = new Woo_Wallet_Withdrawal_Report();

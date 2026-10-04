@@ -146,13 +146,13 @@ $ww_retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
 				if ( 0 === $ww_retention_days % 30 ) {
 					printf(
 						/* translators: %d: number of months */
-						esc_html( _n( 'Receipts are automatically removed %d month after the request date to save storage. If you need a copy after that, please contact us.', 'Receipts are automatically removed %d months after the request date to save storage. If you need a copy after that, please contact us.', (int) ( $ww_retention_days / 30 ), 'woo-wallet' ) ),
+						esc_html( _n( 'Receipts are automatically removed %d month after the receipt was added to save storage. If you need a copy after that, please contact us.', 'Receipts are automatically removed %d months after the receipt was added to save storage. If you need a copy after that, please contact us.', (int) ( $ww_retention_days / 30 ), 'woo-wallet' ) ),
 						(int) ( $ww_retention_days / 30 )
 					);
 				} else {
 					printf(
 						/* translators: %d: number of days */
-						esc_html( _n( 'Receipts are automatically removed %d day after the request date to save storage. If you need a copy after that, please contact us.', 'Receipts are automatically removed %d days after the request date to save storage. If you need a copy after that, please contact us.', $ww_retention_days, 'woo-wallet' ) ),
+						esc_html( _n( 'Receipts are automatically removed %d day after the receipt was added to save storage. If you need a copy after that, please contact us.', 'Receipts are automatically removed %d days after the receipt was added to save storage. If you need a copy after that, please contact us.', $ww_retention_days, 'woo-wallet' ) ),
 						$ww_retention_days
 					);
 				}

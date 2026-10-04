@@ -534,12 +534,14 @@ class Receipt_Privacy_Test extends WP_UnitTestCase {
 		$file = Woo_Wallet_Withdrawal::resolve_receipt_file( Woo_Wallet_Withdrawal::get_request( $id ) );
 		$this->assertFileExists( $file['path'] );
 
-		$wpdb->update( $wpdb->prefix . 'woo_wallet_withdrawals', array( 'date_created' => gmdate( 'Y-m-d H:i:s', time() - ( 365 * DAY_IN_SECONDS ) ) ), array( 'id' => $id ) );
+		$long_ago = gmdate( 'Y-m-d H:i:s', time() - ( 365 * DAY_IN_SECONDS ) );
+		$wpdb->update( $wpdb->prefix . 'woo_wallet_withdrawals', array( 'date_created' => $long_ago, 'receipt_attached_at' => $long_ago ), array( 'id' => $id ) );
 		( new Woo_Wallet_Withdrawal() )->cleanup_old_receipts();
 
 		$this->assertFileDoesNotExist( $file['path'] );
 		$row = Woo_Wallet_Withdrawal::get_request( $id );
 		$this->assertSame( '', (string) $row->receipt_key );
+		$this->assertEmpty( $row->receipt_attached_at );
 		$this->assertFalse( Woo_Wallet_Withdrawal::has_receipt( $row ) );
 	}
 

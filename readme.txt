@@ -3,7 +3,7 @@ Tags: woocommerce wallet, cashback, store credit, partial payment, digital walle
 Requires PHP: 7.4
 Requires at least: 6.4
 Tested up to: 7.1
-Stable tag: 1.11.0
+Stable tag: 1.11.1
 License: GPLv3
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -118,6 +118,21 @@ See the `docs/` folder in the plugin: `docs/API-OVERVIEW.md` is the index (auth,
 10. Wallet actions.
 
 == Changelog ==
+
+= v1.11.1 =
+* Security - A withdrawal can no longer be marked paid without its bank transfer reference number and receipt — from the request screen, the REST API, or when staff log a request that is already paid (which then reserves nothing from the customer). A reference number already saved on the request, or a receipt already attached, counts. Filter `woo_wallet_withdrawal_require_payment_proof` turns it off.
+* Security - A withdrawal's reservation and refund transactions can no longer be deleted from the transaction log. Deleting the reservation of a pending or paid withdrawal handed the money back to the customer while the request stood; deleting a refund paid it back twice. Reject or process the withdrawal instead.
+* Security - A user who still has a waiting withdrawal request (pending, or interrupted mid-reject) cannot be deleted until it is settled — deleting them hid their ledger while the request stayed in the queue, to be paid out by hand or refunded to a wallet that no longer exists.
+* New - Shop managers and administrators can correct a withdrawal's bank details, reference number and receipt from "Edit details" on the request screen, also after it has been paid. Every change is added to the request's notes (who, what, from what to what — bank numbers by their last four digits, with a short fingerprint when a different number ends in the same four digits) and to the staff activity log; changing the bank details of a paid request also emails every administrator at once. The IBAN is checked like a customer's own, and the bank must come from the configured list. Amount, charge and status cannot be edited.
+* New - Two people editing the same request at once can no longer undo each other: each request carries a revision, and a save from a page opened before someone else's change is refused with "reload and try again" instead of putting the old values back.
+* New - Optional "Maximum Withdrawal Charge" (Settings → Withdrawal, for percentage charges): e.g. 0.1% of 100,000 is 100, but with a maximum of 20 the customer pays 20. It applies only while the charge type is a percentage, so a value left over from earlier cannot undercut a fixed charge. Also exposed to apps as `charge_max` in the public settings.
+* Fix - The withdrawal charge is now rounded to the store's decimals before it is stored and deducted, so the amount + charge on a request always equals what left the wallet and an exported column total matches the ledger to the cent.
+* Fix - Receipts were removed 90 days after the request was made, not after the receipt was added, so a receipt attached today to an old request could be deleted by the next sweep. Retention now counts from when the receipt was attached (existing receipts are dated from the request's last update, so nothing is removed sooner than before), and the expiry shown to customers and in the API follows.
+* Fix - Staff logging an already-paid withdrawal attached its receipt in a second step after creating the request; if that failed the request stayed paid without a receipt. The receipt now goes in with the request in one step.
+* Fix - Rejecting the withdrawal of a locked wallet failed, leaving it pending. Returning the reserved amount is now allowed for a locked wallet (only that — a locked wallet still takes no other credit or debit), and any other refund failure says why.
+* Fix - A rejected withdrawal's refund went back in whichever currency was active for the person rejecting it; it now goes back in the currency the request was made in.
+* Change - The encryption hooks are registered by the security class itself at plugin start-up rather than by the staff screen. Turning "Encrypt bank details" on under Staff → Safeguards now needs WOO_WALLET_ENCRYPTION_KEY defined in wp-config.php (a site that already has it on keeps it, with a warning to add the key); encryption switched on in code by the `woo_wallet_encrypt_bank_details` filter shows as on and locked, and saving other settings no longer raises the key error.
+* Upgrade - Adds `receipt_attached_at` and `revision` columns to the withdrawals table.
 
 = v1.11.0 =
 * Security - Nobody can credit or debit their own wallet by hand any more — not a support agent, not a shop manager — from any screen or the REST API. An administrator still can (a store may have only one), but must give a reason, the transaction is flagged, and every other administrator is emailed at once.

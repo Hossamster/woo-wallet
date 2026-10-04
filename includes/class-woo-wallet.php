@@ -223,6 +223,7 @@ final class Woo_Wallet {
 		add_action( 'woocommerce_new_order_item', array( $this, 'woocommerce_new_order_item' ), 10, 2 );
 
 		add_action( 'deleted_user', array( $this, 'delete_user_transaction_records' ) );
+		add_action( 'delete_user', array( $this, 'block_deleting_user_with_open_withdrawals' ) );
 
 		// Invalidate the Reports dashboard summary cache on any ledger write.
 		add_action( 'woo_wallet_transaction_recorded', array( $this, 'flush_reports_cache' ) );
@@ -463,6 +464,57 @@ final class Woo_Wallet {
 			update_metadata( 'order_item', $item_id, '_legacy_fee_key', $item->legacy_fee_key );
 		}
 	}
+	/**
+	 * Refuse to delete a user who still has a withdrawal request waiting
+	 * (pending, or interrupted mid-reject). Deleting them hides their whole
+	 * ledger, but the request would stay in the queue — to be paid out by
+	 * hand, or refunded to a wallet that no longer exists. Settle those
+	 * requests first.
+	 *
+	 * Fires on `delete_user`, which runs before anything is removed.
+	 *
+	 * @param int $id User about to be deleted.
+	 */
+	public function block_deleting_user_with_open_withdrawals( $id ) {
+		if ( ! apply_filters( 'woo_wallet_block_user_deletion_with_open_withdrawals', true, $id ) || ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
+			return;
+		}
+		$open = 0;
+		foreach ( array( 'pending', 'processing' ) as $status ) {
+			$open += Woo_Wallet_Withdrawal::count_requests(
+				array(
+					'user_id' => absint( $id ),
+					'status'  => $status,
+				)
+			);
+		}
+		if ( ! $open ) {
+			return;
+		}
+		$user = get_userdata( absint( $id ) );
+		wp_die(
+			wp_kses_post(
+				sprintf(
+					/* translators: 1: user, 2: number of requests, 3: link to the withdrawals screen */
+					_n(
+						'%1$s cannot be deleted yet: they have %2$d withdrawal request still waiting. Pay or reject it first under %3$s, then delete the user.',
+						'%1$s cannot be deleted yet: they have %2$d withdrawal requests still waiting. Pay or reject them first under %3$s, then delete the user.',
+						$open,
+						'woo-wallet'
+					),
+					'<strong>' . esc_html( $user ? $user->display_name . ' (' . $user->user_login . ')' : '#' . absint( $id ) ) . '</strong>',
+					$open,
+					'<a href="' . esc_url( admin_url( 'admin.php?page=woo-wallet-withdrawals&withdrawal_status=pending' ) ) . '">' . esc_html__( 'Axfit Wallet → Withdrawals', 'woo-wallet' ) . '</a>'
+				)
+			),
+			esc_html__( 'User has open withdrawals', 'woo-wallet' ),
+			array(
+				'response'  => 409,
+				'back_link' => true,
+			)
+		);
+	}
+
 	/**
 	 * Soft-delete a deleted user's wallet transaction records.
 	 *

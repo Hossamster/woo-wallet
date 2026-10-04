@@ -562,3 +562,47 @@ function woo_wallet_update_1110_widen_iban() {
 	}
 	$wpdb->query( "ALTER TABLE `{$table_name}` MODIFY `iban` varchar(191) NULL" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 }
+
+/**
+ * 1.11.1: add `receipt_attached_at` and `revision` to
+ * `woo_wallet_withdrawals`.
+ *
+ * `receipt_attached_at` makes receipt retention count from when the receipt
+ * was attached rather than from the request's age, so a receipt added today
+ * to an old request is not removed by the next sweep. Existing receipts are
+ * backfilled with the request's last update (else its creation) — the best
+ * available estimate, and never earlier than before, so nothing is removed
+ * sooner than it would have been.
+ *
+ * `revision` is bumped on every change to a request, so two staff members
+ * editing at once cannot silently undo each other.
+ *
+ * @return void
+ */
+function woo_wallet_update_1111_withdrawal_revision_and_receipt_age() {
+	global $wpdb;
+	require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+	dbDelta( Woo_Wallet_Install::get_withdrawals_schema() );
+
+	$table_name = $wpdb->base_prefix . 'woo_wallet_withdrawals';
+	if ( $table_name !== $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		return;
+	}
+	if ( ! $wpdb->get_var( "SHOW COLUMNS FROM `{$table_name}` LIKE 'receipt_attached_at'" ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		return;
+	}
+	woo_wallet_backfill_receipt_attached_at();
+}
+
+/**
+ * Give every existing receipt an attached-at date (see
+ * woo_wallet_update_1111_withdrawal_revision_and_receipt_age()). Separate
+ * from the schema change so it holds no DDL of its own.
+ *
+ * @return void
+ */
+function woo_wallet_backfill_receipt_attached_at() {
+	global $wpdb;
+	$table_name = $wpdb->base_prefix . 'woo_wallet_withdrawals';
+	$wpdb->query( "UPDATE `{$table_name}` SET receipt_attached_at = COALESCE( date_updated, date_created ) WHERE receipt_attached_at IS NULL AND ( receipt_key <> '' OR receipt_id > 0 )" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+}

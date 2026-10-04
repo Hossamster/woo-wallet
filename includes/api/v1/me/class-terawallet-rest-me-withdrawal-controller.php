@@ -319,15 +319,9 @@ if ( ! class_exists( 'TeraWallet_REST_Me_Withdrawal_Controller' ) ) {
 			}
 
 			// Receipts are served through an authenticated endpoint rather than direct uploads link.
-			// Receipts are removed by a retention sweep (default 90 days after request date).
+			// Receipts are removed by a retention sweep (default 90 days after the receipt was attached).
 			$receipt_url        = Woo_Wallet_Withdrawal::has_receipt( $row ) ? rest_url( sprintf( '%s/%s/%d/receipt', $this->namespace, $this->rest_base, (int) $row->id ) ) : null;
-			$receipt_expires_at = null;
-			if ( $receipt_url ) {
-				$retention_days = Woo_Wallet_Withdrawal::receipt_retention_days();
-				if ( $retention_days > 0 ) {
-					$receipt_expires_at = mysql_to_rfc3339( gmdate( 'Y-m-d H:i:s', strtotime( $row->date_created ) + ( $retention_days * DAY_IN_SECONDS ) ) );
-				}
-			}
+			$receipt_expires_at = $receipt_url ? Woo_Wallet_Withdrawal::receipt_expires_at( $row ) : null;
 
 			// Decrypt stored fields if encrypted at rest.
 			$account_number = class_exists( 'Woo_Wallet_Security' ) ? Woo_Wallet_Security::decrypt( $row->account_number ) : $row->account_number;

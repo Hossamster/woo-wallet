@@ -61,7 +61,9 @@ customer's point of view nothing meaningfully different has happened.
 
 An uploaded receipt (attached via `receipt_id` on create or on
 `admin/withdrawals/{id}/process`) is only kept for a limited time — **90
-days after the request's `date_created` by default** — after which a daily
+days after the receipt was attached by default** (not after the request was
+made — a receipt added today to an old request still gets the full period) —
+after which a daily
 housekeeping sweep permanently deletes the stored file and clears
 `has_receipt`/`receipt_url` on the request. This is intentional (storage
 hygiene, not a bug): don't rely on a receipt URL staying valid indefinitely,
@@ -253,8 +255,8 @@ Media Library item may be in use elsewhere on the site.
 | `account_number` | string | yes | |
 | `phone` | string | yes | Contact number in case staff need to reach the customer about this request; at least 8 digits |
 | `iban` | string | no | |
-| `reference_no` | string | no | Bank transfer reference |
-| `status` | `pending` \| `paid` | no, default `pending` | Use `paid` when the transfer was already sent (e.g. logging a completed phone request) |
+| `reference_no` | string | no, **required with `status: paid`** | Bank transfer reference |
+| `status` | `pending` \| `paid` | no, default `pending` | Use `paid` when the transfer was already sent (e.g. logging a completed phone request). Needs `reference_no` **and** `receipt_id`, or `400` — and nothing is reserved from the customer |
 | `receipt_id` | integer | no | The id returned by `POST /admin/withdrawals/receipts` |
 | `note` | string | no | |
 | `note_visibility` | `public` \| `private` | no, default `private` | `public` notes are visible to the customer via `/me/withdrawals` |
@@ -292,8 +294,8 @@ Mark a pending request paid or rejected.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `action` | `paid` \| `reject` | yes | |
-| `reference_no` | string | no | |
-| `receipt_id` | integer | no | Same as the create endpoint |
+| `reference_no` | string | no, **required for `paid`** unless the request already has one | |
+| `receipt_id` | integer | no, **required for `paid`** unless the request already has a receipt | Same as the create endpoint |
 | `note` | string | no | |
 | `note_visibility` | `public` \| `private` | no, default `private` | |
 
@@ -305,7 +307,9 @@ retried/duplicated `process` call can never refund twice.
 Returns the updated [admin withdrawal object](#admin-withdrawal-object) on
 success. Returns `409` with `terawallet_rest_withdrawal_process_failed` when
 the request is no longer pending (already processed, or — extremely rarely —
-a concurrent `process` call from another admin won the race first) or when
+a concurrent `process` call from another admin won the race first), when
+`paid` is missing the bank transfer reference number or the receipt (nothing
+is changed), or when
 the reject's refund could not be completed right now (the request is left
 `pending`, safe to retry).
 

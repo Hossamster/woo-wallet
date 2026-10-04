@@ -616,7 +616,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @param string $reference_no     Optional bank transfer reference number.
 		 * @return array {is_valid, message, id, charge}
 		 */
-		private static function reserve_and_insert( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, $iban, $created_by, $status = 'pending', $reference_no = '' ) {
+		private static function reserve_and_insert( $user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, $iban, $created_by, $status = 'pending', $reference_no = '', $receipt_key = '' ) {
 			$amount        = round( (float) $amount, wc_get_price_decimals() );
 			$charge        = self::calculate_charge( $amount, $user_id );
 			$debit_amount  = round( $amount + $charge, wc_get_price_decimals() );
@@ -654,6 +654,9 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				'phone'            => $phone,
 				'iban'             => $iban,
 				'reference_no'     => $reference_no,
+				// Stored by the same INSERT as the request, so a request created
+				// as paid can never exist without the receipt it was paid with.
+				'receipt_key'      => (string) $receipt_key,
 				'status'           => $status,
 			);
 			if ( 'paid' === $status ) {
@@ -727,15 +730,22 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				'iban'             => ( ! empty( $data['iban'] ) && apply_filters( 'woo_wallet_encrypt_bank_details', false ) && class_exists( 'Woo_Wallet_Security' ) ) ? Woo_Wallet_Security::encrypt( (string) $data['iban'] ) : (string) $data['iban'],
 				'reference_no'     => isset( $data['reference_no'] ) ? (string) $data['reference_no'] : '',
 				'receipt_id'       => isset( $data['receipt_id'] ) ? (int) $data['receipt_id'] : 0,
+				'receipt_key'      => isset( $data['receipt_key'] ) ? (string) $data['receipt_key'] : '',
 				'status'           => (string) $data['status'],
 				'created_by'       => isset( $data['created_by'] ) ? (int) $data['created_by'] : 0,
 				'processed_by'     => isset( $data['processed_by'] ) ? (int) $data['processed_by'] : 0,
 				'date_created'     => current_time( 'mysql' ),
 			);
-			$formats = array( '%d', '%d', '%f', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%d', '%d', '%s' );
+			$formats = array( '%d', '%d', '%f', '%f', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%s', '%s', '%d', '%d', '%s' );
 			if ( 'paid' === $row['status'] ) {
 				$row['date_updated'] = current_time( 'mysql' );
 				$formats[]           = '%s';
+			}
+			if ( '' !== $row['receipt_key'] ) {
+				// Retention counts from when the receipt was attached, which
+				// for a request created with its receipt is now.
+				$row['receipt_attached_at'] = current_time( 'mysql' );
+				$formats[]                  = '%s';
 			}
 			// `$wpdb->insert_id` is not reset on failure, so it can hold a stale id
 			// from an earlier query — check `$wpdb->insert()`'s own return value
@@ -1275,7 +1285,19 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			$refund_amount = (float) $request->amount + (float) $request->charge;
 			/* translators: %d: withdrawal request id */
 			$credit_note = sprintf( __( 'Withdrawal request #%d rejected - funds returned', 'woo-wallet' ), $request->id );
-			$credit_id   = woo_wallet()->wallet->credit( $request->user_id, $refund_amount, $credit_note, array( 'category' => 'withdrawal_refund' ) );
+			$credit_args = array(
+				'category'            => 'withdrawal_refund',
+				// Returning money the customer already had reserved is not
+				// "adding to" a locked wallet — see Woo_Wallet_Wallet::recode_transaction().
+				'allow_locked_wallet' => true,
+			);
+			// Back into the wallet the reservation came out of: the request
+			// records the currency it was made in, which is not necessarily the
+			// one active for whoever happens to reject it.
+			if ( ! empty( $request->currency ) ) {
+				$credit_args['currency'] = $request->currency;
+			}
+			$credit_id = woo_wallet()->wallet->credit( $request->user_id, $refund_amount, $credit_note, $credit_args );
 			if ( $credit_id ) {
 				update_wallet_transaction_meta( $credit_id, self::refund_meta_key(), (string) $request->id, $request->user_id );
 			}
@@ -1716,18 +1738,13 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				if ( is_wp_error( $key ) ) {
 					continue;
 				}
-				$saved = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-					self::table(),
+				$saved = self::update_request(
+					(int) $row->id,
 					array(
 						'receipt_key' => $key,
 						'receipt_id'  => 0,
 					),
-					array(
-						'id'         => $row->id,
-						'receipt_id' => $attachment_id,
-					),
-					array( '%s', '%d' ),
-					array( '%d', '%d' )
+					array( 'receipt_id' => $attachment_id )
 				);
 				if ( ! $saved ) {
 					self::discard_staged_receipt( $key );
@@ -1951,7 +1968,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		}
 
 		/**
-		 * Remove receipts older than receipt_retention_days() — both the
+		 * Remove receipts attached more than receipt_retention_days() ago — both the
 		 * stored file and the row's reference to it, so the customer's
 		 * and admin's UI stop showing a link to a file that's been deleted, and
 		 * uploaded proof-of-payment doesn't sit in the server's storage forever.
@@ -1981,7 +1998,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 
 			$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching
 				$wpdb->prepare(
-					'SELECT id, receipt_id, receipt_key FROM ' . self::table() . " WHERE ( receipt_key <> '' OR receipt_id > 0 ) AND date_created < %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
+					'SELECT id, receipt_id, receipt_key FROM ' . self::table() . " WHERE ( receipt_key <> '' OR receipt_id > 0 ) AND COALESCE( receipt_attached_at, date_created ) < %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared
 					$cutoff
 				)
 			);
@@ -1993,21 +2010,19 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				if ( (int) $row->receipt_id ) {
 					wp_delete_attachment( (int) $row->receipt_id, true );
 				}
-				$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-					self::table(),
+				self::update_request(
+					(int) $row->id,
 					array(
-						'receipt_id'  => 0,
-						'receipt_key' => '',
-					),
-					array( 'id' => $row->id ),
-					array( '%d', '%s' ),
-					array( '%d' )
+						'receipt_id'          => 0,
+						'receipt_key'         => '',
+						'receipt_attached_at' => null,
+					)
 				);
 				self::add_note(
 					$row->id,
 					sprintf(
 						/* translators: %d: retention period in days */
-						__( 'Receipt automatically removed after the %d-day retention period.', 'woo-wallet' ),
+						__( 'Receipt automatically removed %d days after it was attached.', 'woo-wallet' ),
 						$retention_days
 					),
 					'private',
@@ -2080,6 +2095,103 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				?>
 			</div>
 			<?php
+		}
+
+		/**
+		 * Update a request row and bump its revision, in one statement.
+		 *
+		 * Every change to a request goes through here, so `revision` moves
+		 * whenever anything about it does — which is what lets an edit made
+		 * from a stale page be refused instead of silently undoing a newer
+		 * correction.
+		 *
+		 * @param int   $id    Request id.
+		 * @param array $data  Column => value. null writes NULL; ints and floats are bound as numbers.
+		 * @param array $where Extra conditions, column => value.
+		 * @return int|false Rows changed.
+		 */
+		private static function update_request( $id, array $data, array $where = array() ) {
+			global $wpdb;
+			$placeholder = function ( $value ) {
+				return is_int( $value ) ? '%d' : ( is_float( $value ) ? '%f' : '%s' );
+			};
+			$sets   = array();
+			$params = array();
+			foreach ( $data as $column => $value ) {
+				if ( null === $value ) {
+					$sets[] = "`{$column}` = NULL";
+					continue;
+				}
+				$sets[]   = "`{$column}` = " . $placeholder( $value );
+				$params[] = $value;
+			}
+			$sets[]   = '`revision` = `revision` + 1';
+			$conds    = array( '`id` = %d' );
+			$params[] = (int) $id;
+			foreach ( $where as $column => $value ) {
+				$conds[]  = "`{$column}` = " . $placeholder( $value );
+				$params[] = $value;
+			}
+			return $wpdb->query( $wpdb->prepare( 'UPDATE ' . self::table() . ' SET ' . implode( ', ', $sets ) . ' WHERE ' . implode( ' AND ', $conds ), $params ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		}
+
+		/**
+		 * When a request's receipt will be removed by the retention sweep:
+		 * the retention period after the receipt was attached, not after the
+		 * request was made. 0 when there is no receipt or retention is off.
+		 *
+		 * @param object $row Withdrawal row.
+		 * @return int Unix timestamp.
+		 */
+		public static function receipt_expires_timestamp( $row ) {
+			$days = self::receipt_retention_days();
+			if ( $days <= 0 || ! self::has_receipt( $row ) ) {
+				return 0;
+			}
+			$from = ! empty( $row->receipt_attached_at ) ? $row->receipt_attached_at : $row->date_created;
+			return strtotime( $from ) + ( $days * DAY_IN_SECONDS );
+		}
+
+		/**
+		 * The same, as an RFC 3339 string for the REST API.
+		 *
+		 * @param object $row Withdrawal row.
+		 * @return string|null
+		 */
+		public static function receipt_expires_at( $row ) {
+			$timestamp = self::receipt_expires_timestamp( $row );
+			return $timestamp ? mysql_to_rfc3339( gmdate( 'Y-m-d H:i:s', $timestamp ) ) : null;
+		}
+
+		/**
+		 * The withdrawal a ledger transaction belongs to — as its reservation
+		 * debit or its refund credit — if any.
+		 *
+		 * @param int $transaction_id Wallet transaction id.
+		 * @return object|null {id, status, role: 'reservation'|'refund'}
+		 */
+		public static function request_for_transaction( $transaction_id ) {
+			global $wpdb;
+			$transaction_id = absint( $transaction_id );
+			if ( ! $transaction_id ) {
+				return null;
+			}
+			$row = $wpdb->get_row( $wpdb->prepare( 'SELECT id, status, transaction_id, refund_transaction_id FROM ' . self::table() . ' WHERE transaction_id = %d OR refund_transaction_id = %d LIMIT 1', $transaction_id, $transaction_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+			if ( $row ) {
+				$row->role = (int) $row->transaction_id === $transaction_id ? 'reservation' : 'refund';
+				return $row;
+			}
+			// A refund whose withdrawal row never got its refund_transaction_id
+			// (interrupted) is still tagged in the ledger.
+			$tagged = $wpdb->get_var( $wpdb->prepare( "SELECT meta_value FROM {$wpdb->base_prefix}woo_wallet_transaction_meta WHERE transaction_id = %d AND meta_key = %s LIMIT 1", $transaction_id, self::refund_meta_key() ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			if ( $tagged ) {
+				$request = $wpdb->get_row( $wpdb->prepare( 'SELECT id, status FROM ' . self::table() . ' WHERE id = %d', (int) $tagged ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL.NotPrepared
+				if ( $request ) {
+					$request->role = 'refund';
+					return $request;
+				}
+			}
+			return null;
 		}
 
 		/**
@@ -2397,7 +2509,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 										<?php
 										printf(
 											/* translators: %d: retention period in days */
-											esc_html__( 'Automatically removed %d days after the request date.', 'woo-wallet' ),
+											esc_html__( 'Automatically removed %d days after it was attached.', 'woo-wallet' ),
 											(int) $ww_retention_days
 										);
 										?>
@@ -2530,6 +2642,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 						<form method="post" action="<?php echo esc_url( $post_url ); ?>" enctype="multipart/form-data">
 							<input type="hidden" name="action" value="woo_wallet_withdrawal_edit" />
 							<input type="hidden" name="withdrawal_id" value="<?php echo esc_attr( $request->id ); ?>" />
+							<input type="hidden" name="revision" value="<?php echo esc_attr( (int) $request->revision ); ?>" />
 							<?php wp_nonce_field( 'woo_wallet_withdrawal_edit' ); ?>
 							<?php Woo_Wallet_Staff::form_token_field(); ?>
 							<table class="form-table">
@@ -2808,23 +2921,16 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				}
 			}
 
-			$result = self::reserve_and_insert( $target_user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, (string) $iban, (int) $admin_id, $status, (string) $reference_no );
+			$result = self::reserve_and_insert( $target_user_id, $amount, $bank_name, $beneficiary_name, $account_number, $phone, (string) $iban, (int) $admin_id, $status, (string) $reference_no, (string) $receipt_key );
 			if ( ! $result['is_valid'] ) {
 				self::discard_staged_receipt( $receipt_key );
 				return $result;
 			}
 
 			if ( $receipt_key ) {
-				global $wpdb;
-				$saved = $wpdb->update( self::table(), array( 'receipt_key' => $receipt_key ), array( 'id' => $result['id'] ), array( '%s' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-				if ( $saved ) {
-					// Only now — the key is on the row — is it safe to delete
-					// the temporary public upload.
-					self::delete_receipt_upload( $receipt_id );
-				} else {
-					self::discard_staged_receipt( $receipt_key );
-					self::add_note( $result['id'], __( 'The receipt could not be attached to this request. Please upload it again.', 'woo-wallet' ), 'private', $admin_id );
-				}
+				// The key went in with the INSERT above; only now is it safe to
+				// delete the temporary public upload.
+				self::delete_receipt_upload( $receipt_id );
 			}
 			if ( $note ) {
 				self::add_note( $result['id'], $note, $note_visibility, $admin_id );
@@ -2873,15 +2979,22 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 		 * @param array $fields     New values, keyed as in editable_fields(); keys left out are not changed.
 		 * @param int   $receipt_id Optional new receipt (a wallet-owned temporary upload).
 		 * @param int   $editor_id  Staff member editing.
+		 * @param int|null $expected_revision The revision of the request when the editor opened it. When given, the edit is refused if anyone has changed the request since — otherwise a form opened before a colleague's correction would put the old values back.
 		 * @return array {is_valid, message, receipt_orphaned?}
 		 */
-		public static function admin_edit( $id, array $fields, $receipt_id, $editor_id ) {
-			global $wpdb;
+		public static function admin_edit( $id, array $fields, $receipt_id, $editor_id, $expected_revision = null ) {
 			$request = $id ? self::get_request( $id ) : null;
 			if ( ! $request ) {
 				return array(
 					'is_valid'         => false,
 					'message'          => __( 'Withdrawal request not found.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
+			}
+			if ( null !== $expected_revision && (int) $expected_revision !== (int) $request->revision ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'This request was changed by someone else (or by a status change) after you opened it. Reload the page and make your edit again — nothing was saved.', 'woo-wallet' ),
 					'receipt_orphaned' => (bool) $receipt_id,
 				);
 			}
@@ -2949,15 +3062,14 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 					'receipt_orphaned' => (bool) $receipt_id,
 				);
 			}
-			if ( 'paid' === $request->status ) {
-				$proof = self::check_payment_proof( $new['reference_no'], true );
-				if ( is_wp_error( $proof ) ) {
-					return array(
-						'is_valid'         => false,
-						'message'          => __( 'A paid withdrawal must keep its bank transfer reference number.', 'woo-wallet' ),
-						'receipt_orphaned' => (bool) $receipt_id,
-					);
-				}
+			// An edit may correct proof of payment, never remove it. (A request
+			// paid before proof was required, with none, can still be edited.)
+			if ( 'paid' === $request->status && '' !== trim( (string) $request->reference_no ) && '' === $new['reference_no'] ) {
+				return array(
+					'is_valid'         => false,
+					'message'          => __( 'A paid withdrawal must keep its bank transfer reference number.', 'woo-wallet' ),
+					'receipt_orphaned' => (bool) $receipt_id,
+				);
 			}
 
 			$changes = array();
@@ -2991,26 +3103,25 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 
 			$encrypt = apply_filters( 'woo_wallet_encrypt_bank_details', false ) && class_exists( 'Woo_Wallet_Security' );
 			$update  = array();
-			$formats = array();
 			foreach ( $changes as $key => $change ) {
-				$value           = $change['to'];
-				$update[ $key ]  = ( $encrypt && in_array( $key, array( 'account_number', 'iban' ), true ) && '' !== $value ) ? Woo_Wallet_Security::encrypt( $value ) : $value;
-				$formats[]       = '%s';
+				$value          = $change['to'];
+				$update[ $key ] = ( $encrypt && in_array( $key, array( 'account_number', 'iban' ), true ) && '' !== $value ) ? Woo_Wallet_Security::encrypt( $value ) : $value;
 			}
 			if ( $receipt_key ) {
-				$update['receipt_key'] = $receipt_key;
-				$update['receipt_id']  = 0;
-				$formats[]             = '%s';
-				$formats[]             = '%d';
+				$update['receipt_key']         = $receipt_key;
+				$update['receipt_id']          = 0;
+				$update['receipt_attached_at'] = current_time( 'mysql' );
 			}
-			// Conditioned on the status read above, so an edit racing a
-			// mark-paid / reject never overwrites what that just wrote.
-			$saved = $wpdb->update( self::table(), $update, array( 'id' => $request->id, 'status' => $request->status ), $formats, array( '%d', '%s' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+			// Conditioned on the revision read above: if anything about the
+			// request changed between reading it and this write, nothing is
+			// written. (The check at the top covers the editor's own stale
+			// page; this covers the gap since.)
+			$saved = self::update_request( $request->id, $update, array( 'revision' => (int) $request->revision ) );
 			if ( ! $saved ) {
 				self::discard_staged_receipt( $receipt_key );
 				return array(
 					'is_valid'         => false,
-					'message'          => __( 'The request changed while you were editing it — no changes were made. Please reload and try again.', 'woo-wallet' ),
+					'message'          => __( 'The request was changed by someone else while you were saving — no changes were made. Reload the page and try again.', 'woo-wallet' ),
 					'receipt_orphaned' => (bool) $receipt_id,
 				);
 			}
@@ -3118,7 +3229,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				/* translators: %s: upload error message */
 				$result = array( 'is_valid' => false, 'message' => sprintf( __( 'Receipt upload failed, so nothing was changed: %s', 'woo-wallet' ), $receipt['error'] ) );
 			} else {
-				$result = self::admin_edit( $id, $fields, $receipt['id'], $admin_id );
+				$result = self::admin_edit( $id, $fields, $receipt['id'], $admin_id, isset( $_POST['revision'] ) ? absint( $_POST['revision'] ) : -1 );
 				if ( ! empty( $result['receipt_orphaned'] ) && $receipt['id'] ) {
 					wp_delete_attachment( $receipt['id'], true );
 				}
@@ -3299,34 +3410,22 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				// sent the transfer manually) — one atomic, race-safe update is enough.
 				$update = array(
 					'status'       => 'paid',
-					'processed_by' => $admin_id,
+					'processed_by' => (int) $admin_id,
 					'date_updated' => current_time( 'mysql' ),
 				);
-				$formats = array( '%s', '%d', '%s' );
 				if ( $reference_no ) {
-					$update['reference_no'] = $reference_no;
-					$formats[]              = '%s';
+					$update['reference_no'] = (string) $reference_no;
 				}
 				if ( $receipt_key ) {
-					$update['receipt_key'] = $receipt_key;
-					$update['receipt_id']  = 0;
-					$formats[]             = '%s';
-					$formats[]             = '%d';
+					$update['receipt_key']         = $receipt_key;
+					$update['receipt_id']          = 0;
+					$update['receipt_attached_at'] = current_time( 'mysql' );
 				}
 
 				// Conditioned on `status = 'pending'` and checked via the
 				// affected-row count: this is what makes two staff members
 				// racing to process the same request safe.
-				$affected = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-					self::table(),
-					$update,
-					array(
-						'id'     => $request->id,
-						'status' => 'pending',
-					),
-					$formats,
-					array( '%d', '%s' )
-				);
+				$affected = self::update_request( $request->id, $update, array( 'status' => 'pending' ) );
 
 				if ( ! $affected ) {
 					self::discard_staged_receipt( $receipt_key );
@@ -3361,30 +3460,18 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			// never having moved (which is the whole bug this avoids).
 			$claim = array(
 				'status'       => 'processing',
-				'processed_by' => $admin_id,
+				'processed_by' => (int) $admin_id,
 				'date_updated' => current_time( 'mysql' ),
 			);
-			$claim_formats = array( '%s', '%d', '%s' );
 			if ( $reference_no ) {
-				$claim['reference_no'] = $reference_no;
-				$claim_formats[]       = '%s';
+				$claim['reference_no'] = (string) $reference_no;
 			}
 			if ( $receipt_key ) {
-				$claim['receipt_key'] = $receipt_key;
-				$claim['receipt_id']  = 0;
-				$claim_formats[]      = '%s';
-				$claim_formats[]      = '%d';
+				$claim['receipt_key']         = $receipt_key;
+				$claim['receipt_id']          = 0;
+				$claim['receipt_attached_at'] = current_time( 'mysql' );
 			}
-			$claimed = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-				self::table(),
-				$claim,
-				array(
-					'id'     => $request->id,
-					'status' => 'pending',
-				),
-				$claim_formats,
-				array( '%d', '%s' )
-			);
+			$claimed = self::update_request( $request->id, $claim, array( 'status' => 'pending' ) );
 
 			if ( ! $claimed ) {
 				self::discard_staged_receipt( $receipt_key );
@@ -3412,15 +3499,12 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 				// resolves safely by calling idempotent_refund() again
 				// (finds the tag, credits nothing new) — the column here
 				// is fast-display bookkeeping, not the safety mechanism.
-				$wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-					self::table(),
+				self::update_request(
+					$request->id,
 					array(
 						'status'                => 'rejected',
-						'refund_transaction_id' => $credit_id,
-					),
-					array( 'id' => $request->id ),
-					array( '%s', '%d' ),
-					array( '%d' )
+						'refund_transaction_id' => (int) $credit_id,
+					)
 				);
 				if ( $note ) {
 					self::add_note( $request->id, $note, $note_visibility, $admin_id );
@@ -3439,7 +3523,10 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			// the claim step stay on the row (not orphaned) — only a lost race
 			// (above) ever leaves a fresh upload unattached to anything.
 			$refund_amount = (float) $request->amount + (float) $request->charge;
-			$wpdb->update( self::table(), array( 'status' => 'pending' ), array( 'id' => $request->id ), array( '%s' ), array( '%d' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+			self::update_request( $request->id, array( 'status' => 'pending' ) );
+			$failure_message = is_wallet_account_locked( $request->user_id )
+				? __( 'The refund could not be issued because the customer\'s wallet is locked, so the request was left pending. Unlock the wallet, then try Reject again.', 'woo-wallet' )
+				: __( 'The refund to the customer wallet failed, so the request was left pending. Please try Reject again.', 'woo-wallet' );
 			if ( $note ) {
 				self::add_note( $request->id, $note, $note_visibility, $admin_id );
 			}
@@ -3454,7 +3541,7 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			do_action( 'woo_wallet_withdrawal_reject_refund_failed', $request->id, $request->user_id, $refund_amount );
 			return array(
 				'is_valid' => false,
-				'message'  => __( 'The refund to the customer wallet failed, so the request was left pending. Please try Reject again.', 'woo-wallet' ),
+				'message'  => $failure_message,
 			);
 		}
 
@@ -3611,18 +3698,13 @@ if ( ! class_exists( 'Woo_Wallet_Withdrawal' ) ) {
 			// Conditioned on `status = 'processing'`: if two staff members both
 			// land here for the same row, only one of these updates affects a
 			// row, so the hook/note below fire exactly once.
-			$affected = $wpdb->update( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-				self::table(),
+			$affected = self::update_request(
+				$request->id,
 				array(
 					'status'                => 'rejected',
-					'refund_transaction_id' => $credit_id,
+					'refund_transaction_id' => (int) $credit_id,
 				),
-				array(
-					'id'     => $request->id,
-					'status' => 'processing',
-				),
-				array( '%s', '%d' ),
-				array( '%d', '%s' )
+				array( 'status' => 'processing' )
 			);
 
 			if ( ! $affected ) {

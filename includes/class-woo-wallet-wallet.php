@@ -333,6 +333,25 @@ if ( ! class_exists( 'Woo_Wallet_Wallet' ) ) {
 			if ( ! $row ) {
 				return new WP_Error( 'woo_wallet_transaction_not_found', __( 'Transaction not found.', 'woo-wallet' ) );
 			}
+			// The ledger row that reserves a withdrawal's money (or returns it
+			// on rejection) is what the balance is computed from. Deleting it
+			// would hand the money back to the customer while the request
+			// still stands — or pay it back twice. Reconcile through the
+			// withdrawal instead.
+			if ( class_exists( 'Woo_Wallet_Withdrawal' ) ) {
+				$withdrawal = Woo_Wallet_Withdrawal::request_for_transaction( $transaction_id );
+				if ( $withdrawal ) {
+					return new WP_Error(
+						'woo_wallet_transaction_protected',
+						sprintf(
+							/* translators: 1: transaction id, 2: withdrawal id */
+							__( 'Transaction #%1$d belongs to withdrawal request #%2$d and cannot be deleted. Reject or process the withdrawal instead; to correct a balance, make a manual credit or debit with a note.', 'woo-wallet' ),
+							$transaction_id,
+							(int) $withdrawal->id
+						)
+					);
+				}
+			}
 			$user_id      = (int) $row->user_id;
 			$lock_name    = 'woo_wallet_lock_user_' . $user_id;
 			$lock_timeout = (int) apply_filters( 'woo_wallet_db_lock_timeout', 5, $user_id );
@@ -1694,7 +1713,13 @@ if ( ! class_exists( 'Woo_Wallet_Wallet' ) ) {
 			if ( ! $this->user_id ) {
 				return false;
 			}
-			if ( is_wallet_account_locked( $this->user_id ) ) {
+			// A locked wallet takes no credits or debits — except a withdrawal
+			// refund: rejecting a withdrawal cancels a debt the store already
+			// holds (the reservation taken from this wallet), so it must be
+			// able to give it back. Deliberately narrow: only the withdrawal
+			// code passes this, and only together with that category.
+			$returns_reservation = 'credit' === $type && is_array( $args ) && isset( $args['category'] ) && 'withdrawal_refund' === $args['category'] && ! empty( $args['allow_locked_wallet'] );
+			if ( is_wallet_account_locked( $this->user_id ) && ! $returns_reservation ) {
 				return false;
 			}
 			if ( $amount < 0 ) {

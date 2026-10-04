@@ -548,9 +548,7 @@ if ( ! class_exists( 'TeraWallet_REST_Admin_Withdrawal_Controller' ) ) {
 				// admin-screen callers): whatever consumes this REST response
 				// fetches it with its own authenticated request headers.
 				'receipt_url'           => $has_receipt ? Woo_Wallet_Withdrawal::receipt_view_url( $row->id, false ) : null,
-				'receipt_expires_at'    => ( $has_receipt && Woo_Wallet_Withdrawal::receipt_retention_days() > 0 )
-					? mysql_to_rfc3339( gmdate( 'Y-m-d H:i:s', strtotime( $row->date_created ) + ( Woo_Wallet_Withdrawal::receipt_retention_days() * DAY_IN_SECONDS ) ) )
-					: null,
+				'receipt_expires_at'    => Woo_Wallet_Withdrawal::receipt_expires_at( $row ),
 				'status'                => $row->status,
 				'transaction_id'        => (int) $row->transaction_id,
 				'refund_transaction_id' => $row->refund_transaction_id ? (int) $row->refund_transaction_id : null,
