@@ -21,6 +21,9 @@ class Withdrawal_Proof_Edit_Charge_Test extends WP_UnitTestCase {
 		$this->other_admin_id = self::factory()->user->create( array( 'role' => 'administrator', 'user_email' => 'partner@example.com' ) );
 		get_userdata( $this->other_admin_id )->add_cap( 'manage_woocommerce' );
 		$this->manager_id  = self::factory()->user->create( array( 'role' => 'shop_manager', 'display_name' => 'Sara Manager' ) );
+		// What a shop manager has on a real site, stated explicitly rather than
+		// left to whichever WooCommerce version installed the role.
+		get_userdata( $this->manager_id )->add_cap( 'manage_woocommerce' );
 		$this->customer_id = self::factory()->user->create( array( 'role' => 'customer' ) );
 		woo_wallet()->wallet->credit( $this->customer_id, 200000, 'test funding' );
 	}
@@ -54,6 +57,8 @@ class Withdrawal_Proof_Edit_Charge_Test extends WP_UnitTestCase {
 
 	private function render_detail( $id ) {
 		$_GET = array( 'page' => 'woo-wallet-withdrawals', 'action' => 'view', 'id' => $id );
+		// A permission wp_die() here says nothing about which user was acting.
+		$this->assertTrue( current_user_can( Woo_Wallet_Staff::CAP_VIEW ), 'The current user (#' . get_current_user_id() . ') cannot view wallet screens; roles: ' . implode( ',', wp_get_current_user()->roles ) );
 		ob_start();
 		( new Woo_Wallet_Withdrawal() )->render_admin_page();
 		return ob_get_clean();
