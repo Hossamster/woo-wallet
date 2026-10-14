@@ -364,6 +364,11 @@ if ( ! class_exists( 'Woo_Wallet_Ajax' ) ) {
 					)
 				);
 				if ( ! is_wp_error( $refund ) ) {
+					// What the refund actually pays out: less than the amount asked
+					// for when cashback was deducted from it (see
+					// Woo_Wallet_Cashback_Refund). Crediting the asked-for amount would
+					// give the cashback back to the customer.
+					$refund_amount  = wc_format_decimal( $refund->get_amount(), wc_get_price_decimals() );
 					$transaction_id = woo_wallet()->wallet->credit( $customer_id, $refund_amount, $refund_reason, array( 'currency' => $order->get_currency( 'edit' ) ) );
 					if ( ! $transaction_id ) {
 						if ( $api_refund ) {

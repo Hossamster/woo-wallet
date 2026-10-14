@@ -116,6 +116,9 @@ final class Woo_Wallet {
 		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-cashback.php';
 		$this->cashback = new Woo_Wallet_Cashback();
 
+		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-cashback-refund.php';
+		Woo_Wallet_Cashback_Refund::init();
+
 		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-widgets.php';
 
 		include_once WOO_WALLET_ABSPATH . 'includes/class-woo-wallet-withdrawal.php';

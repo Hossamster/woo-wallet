@@ -103,30 +103,31 @@ class WOO_Wallet_Helper {
 	}
 
 	/**
-	 * Order statuses that trigger cashback, in the shape the rest of the
-	 * plugin speaks.
+	 * Statuses an order is in BEFORE it has been delivered and paid for — cashback
+	 * is never issued on these, whatever a filter returns.
+	 */
+	const CASHBACK_EARLY_STATUSES = array( 'pending', 'on-hold', 'processing', 'failed', 'cancelled', 'refunded', 'draft', 'checkout-draft', 'trash' );
+
+	/**
+	 * Order statuses that trigger cashback: Completed, and only Completed.
 	 *
-	 * The `process_cashback_status` setting offers `wc_get_order_statuses()`
-	 * as its options, whose keys are prefixed (`wc-processing`), while the
-	 * field default, the `woocommerce_order_status_{$status}` hook name and
-	 * `WC_Order::get_status()` are all unprefixed. A store that never saved
-	 * the setting therefore ran on the correct shape and a store that saved
-	 * it once did not. Both readers go through here so they cannot drift.
+	 * Cashback used to be configurable (default: processing and completed).
+	 * Paying it as soon as an order is processing meant it could be spent or
+	 * withdrawn before the order was delivered, then be impossible to take back
+	 * when the order was cancelled or returned. It is now issued once the order
+	 * is Completed — delivered and paid — and the setting is gone.
 	 *
-	 * The `wallet_cashback_order_status` filter keeps its existing contract:
-	 * it still receives the stored value and still decides the final list.
-	 * Normalisation runs after it, and is a no-op on unprefixed input.
+	 * The `wallet_cashback_order_status` filter remains for a store with its own
+	 * "delivered" status, but it can only replace Completed with later statuses:
+	 * the early ones above are removed from whatever it returns.
 	 *
 	 * @return array Unprefixed order statuses.
 	 */
 	public static function get_cashback_order_statuses(): array {
-		$statuses = woo_wallet()->settings_api->get_option(
-			'process_cashback_status',
-			'_wallet_settings_credit',
-			array( 'processing', 'completed' )
-		);
+		$statuses = apply_filters( 'wallet_cashback_order_status', array( 'completed' ) );
+		$statuses = array_values( array_diff( self::normalize_order_statuses( $statuses ), self::CASHBACK_EARLY_STATUSES ) );
 
-		return self::normalize_order_statuses( apply_filters( 'wallet_cashback_order_status', $statuses ) );
+		return $statuses ? $statuses : array( 'completed' );
 	}
 
 	/**

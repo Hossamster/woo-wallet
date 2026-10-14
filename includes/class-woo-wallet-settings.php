@@ -407,19 +407,6 @@ if ( ! class_exists( 'Woo_Wallet_Settings' ) ) :
 				'equals' => 'on',
 			);
 
-			// Offer the order statuses under the unprefixed keys the rest of
-			// the plugin uses — wc_get_order_statuses() returns them prefixed
-			// (`wc-processing`), and a saved prefix matches no hook and no
-			// WC_Order::get_status(). Built in one pass so a status whose
-			// normalised slug collides with another simply overwrites it.
-			$order_status_options = array();
-			foreach ( wc_get_order_statuses() as $order_status => $order_status_label ) {
-				$normalized = WOO_Wallet_Helper::normalize_order_statuses( array( $order_status ) );
-				if ( $normalized ) {
-					$order_status_options[ $normalized[0] ] = $order_status_label;
-				}
-			}
-
 			// Per-currency ledger mode is gated by a filter through PR2 — when the
 			// flag flips on, this field appears under General Options and admins can
 			// switch the storage semantics. Surfaced as an empty array otherwise so
@@ -493,26 +480,11 @@ if ( ! class_exists( 'Woo_Wallet_Settings' ) ) :
 						array(
 							'name'              => 'is_enable_cashback_reward_program',
 							'label'             => __( 'Enable Cashback Rewards', 'woo-wallet' ),
-							'desc'              => __( 'Customers earn wallet credit on qualifying orders', 'woo-wallet' ),
+							'desc'              => __( 'Customers earn wallet credit on qualifying orders once the order is marked Completed (delivered and paid) — never earlier, so cashback can always be taken back if the order is cancelled or returned.', 'woo-wallet' ),
 							'type'              => 'checkbox',
 							'group'             => 'wallet_cashback',
 							'group_title'       => __( 'Cashback Rewards', 'woo-wallet' ),
 							'group_description' => __( 'Reward customers with wallet credits on purchases', 'woo-wallet' ),
-						),
-						array(
-							'name'     => 'process_cashback_status',
-							'label'    => __( 'Process cashback', 'woo-wallet' ),
-							'desc'     => __( 'Select order status to process cashback', 'woo-wallet' ),
-							'type'     => 'select',
-							'group'    => 'wallet_cashback',
-							'options'  => apply_filters(
-								'woo_wallet_process_cashback_status',
-								$order_status_options
-							),
-							'default'  => array( 'processing', 'completed' ),
-							'size'     => 'regular-text wc-enhanced-select',
-							'multiple' => true,
-							'show_if'  => $cashbak_show_if,
 						),
 						array(
 							'name'     => 'exclude_role',
@@ -628,9 +600,18 @@ if ( ! class_exists( 'Woo_Wallet_Settings' ) ) :
 							'show_if' => $cashbak_show_if,
 						),
 						array(
+							'name'    => 'cashback_deduct_from_refund',
+							'label'   => __( 'Deduct Cashback From Refunds', 'woo-wallet' ),
+							'desc'    => __( 'When an order is refunded, deduct the cashback earned on the refunded part from the refund itself — recorded as a separate "Cashback adjustment" refund that is not paid out. Whether or not the customer has spent the cashback, they get back exactly what they paid for it. This does not depend on their wallet balance, and replaces Refund Clawback below for refunds. Off by default. Add a line to your refund policy: refunds are reduced by the cashback earned on the refunded items.', 'woo-wallet' ),
+							'type'    => 'checkbox',
+							'group'   => 'wallet_cashback',
+							'default' => 'no',
+							'show_if' => $cashbak_show_if,
+						),
+						array(
 							'name'    => 'cashback_clawback_on_refund',
 							'label'   => __( 'Refund Clawback', 'woo-wallet' ),
-							'desc'    => __( 'Claw back cashback prorated against the refunded fraction when an order is refunded. Off by default for upgrade safety.', 'woo-wallet' ),
+							'desc'    => __( 'Claw back cashback prorated against the refunded fraction when an order is refunded, taking it from the customer\'s wallet balance (which fails if they no longer have it). Off by default for upgrade safety. Not used while "Deduct Cashback From Refunds" is on.', 'woo-wallet' ),
 							'type'    => 'checkbox',
 							'group'   => 'wallet_cashback',
 							'default' => 'no',

@@ -817,6 +817,12 @@ if ( ! class_exists( 'Woo_Wallet_Wallet' ) ) {
 		public function process_partial_payment_refund( $order_id, $refund_id ) {
 			global $wpdb;
 
+			// The cashback adjustment is a bookkeeping refund, not money going
+			// back to the customer — nothing to return to the wallet for it.
+			if ( Woo_Wallet_Cashback_Refund::is_adjustment( wc_get_order( $refund_id ) ) ) {
+				return;
+			}
+
 			if ( 'on' !== woo_wallet()->settings_api->get_option( 'partial_payment_refund_on_partial_refund', '_wallet_settings_general', 'on' ) ) {
 				return;
 			}
@@ -1222,6 +1228,13 @@ if ( ! class_exists( 'Woo_Wallet_Wallet' ) ) {
 
 			// Feature is off by default for upgrade safety.
 			if ( 'on' !== woo_wallet()->settings_api->get_option( 'cashback_clawback_on_refund', '_wallet_settings_credit', 'no' ) ) {
+				return;
+			}
+
+			// Cashback is deducted from the refund itself (see
+			// Woo_Wallet_Cashback_Refund) — taking it from the wallet as well
+			// would recover it twice.
+			if ( Woo_Wallet_Cashback_Refund::enabled() ) {
 				return;
 			}
 

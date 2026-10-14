@@ -1363,6 +1363,19 @@ if ( ! class_exists( 'Woo_Wallet_Admin' ) ) {
 					</td>
 				</tr>
 				<?php
+				if ( Woo_Wallet_Cashback_Refund::enabled() ) {
+					$recovered = (float) $order->get_meta( Woo_Wallet_Cashback_Refund::ORDER_RECOVERED_META );
+					?>
+					<tr>
+						<td class="label"><?php esc_html_e( 'Cashback deducted from refunds', 'woo-wallet' ); ?>:</td>
+						<td width="1%"></td>
+						<td class="via-wallet">
+							<?php echo wc_price( $recovered, woo_wallet_wc_price_args( $order->get_customer_id() ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+							<br /><small><?php esc_html_e( 'Taken out of a refund automatically, in proportion to the part refunded.', 'woo-wallet' ); ?></small>
+						</td>
+					</tr>
+					<?php
+				}
 			}
 		}
 

@@ -31,6 +31,7 @@ if ( ! class_exists( 'Woo_Wallet_Audit' ) ) {
 		const EVENT_STAFF_CHANGED       = 'staff_changed';
 		const EVENT_LARGE_CONFIRMED     = 'large_adjustment_confirmed';
 		const EVENT_WITHDRAWAL_EDITED   = 'withdrawal_edited';
+		const EVENT_CASHBACK_ADJUSTMENT_DELETED = 'cashback_adjustment_deleted';
 
 		/**
 		 * The bank details of an already-paid withdrawal were changed — the
@@ -99,6 +100,7 @@ if ( ! class_exists( 'Woo_Wallet_Audit' ) ) {
 				self::EVENT_STAFF_CHANGED       => __( 'Changed staff access', 'woo-wallet' ),
 				self::EVENT_LARGE_CONFIRMED     => __( 'Confirmed a large adjustment', 'woo-wallet' ),
 				self::EVENT_WITHDRAWAL_EDITED   => __( 'Edited a withdrawal', 'woo-wallet' ),
+				self::EVENT_CASHBACK_ADJUSTMENT_DELETED => __( 'Deleted a refund\'s cashback adjustment', 'woo-wallet' ),
 				self::EVENT_PAID_BANK_DETAILS_CHANGED => __( 'Changed the bank details of a paid withdrawal', 'woo-wallet' ),
 			);
 		}
