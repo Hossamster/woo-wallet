@@ -130,20 +130,44 @@ if ( class_exists( 'WC_Payment_Gateway' ) ) {
 				wc_add_notice( __( 'Payment error: ', 'woo-wallet' ) . __( 'Invalid order.', 'woo-wallet' ), 'error' );
 				return array( 'result' => 'failure' );
 			}
-			if ( ( $order->get_total( 'edit' ) > woo_wallet()->wallet->get_wallet_balance( get_current_user_id(), 'edit' ) ) && apply_filters( 'woo_wallet_disallow_negative_transaction', ( woo_wallet()->wallet->get_wallet_balance( get_current_user_id(), 'edit' ) <= 0 || $order->get_total( 'edit' ) > woo_wallet()->wallet->get_wallet_balance( get_current_user_id(), 'edit' ) ), $order->get_total( 'edit' ), woo_wallet()->wallet->get_wallet_balance( get_current_user_id(), 'edit' ) ) ) {
+
+			// The wallet that is charged is the order's customer's (see
+			// woocommerce_pre_payment_complete()), so that is the one whose
+			// balance is checked — not whoever happens to be logged in, which
+			// differs for an order paid on someone's behalf.
+			$customer_id = (int) $order->get_customer_id( 'edit' );
+			if ( ! $customer_id ) {
+				wc_add_notice( __( 'Payment error: ', 'woo-wallet' ) . __( 'This order does not belong to a wallet account.', 'woo-wallet' ), 'error' );
+				return array( 'result' => 'failure' );
+			}
+			$total   = (float) $order->get_total( 'edit' );
+			$balance = (float) woo_wallet()->wallet->get_wallet_balance( $customer_id, 'edit' );
+			if ( $total > $balance && apply_filters( 'woo_wallet_disallow_negative_transaction', ( $balance <= 0 || $total > $balance ), $total, $balance ) ) {
 				/* translators: 1: wallet amount */
-				wc_add_notice( __( 'Payment error: ', 'woo-wallet' ) . sprintf( __( 'Your wallet balance is low. Please add %s to proceed with this transaction.', 'woo-wallet' ), wc_price( $order->get_total( 'edit' ) - woo_wallet()->wallet->get_wallet_balance( get_current_user_id(), 'edit' ), woo_wallet_wc_price_args( $order->get_customer_id() ) ) ), 'error' );
+				wc_add_notice( __( 'Payment error: ', 'woo-wallet' ) . sprintf( __( 'Your wallet balance is low. Please add %s to proceed with this transaction.', 'woo-wallet' ), wc_price( $total - $balance, woo_wallet_wc_price_args( $customer_id ) ) ), 'error' );
 				return array( 'result' => 'failure' );
 			}
 
-			// Reduce stock levels.
+			// Complete the payment FIRST: this is where the wallet is actually
+			// debited (woocommerce_pre_payment_complete), and the balance
+			// checked above can be spent by a concurrent order before that
+			// happens. WooCommerce catches an exception from the debit, notes it
+			// on the order and returns false — so the result has to be checked,
+			// and stock and the cart must not be touched until the order is
+			// really paid.
+			$completed = $order->payment_complete();
+			if ( ! $completed && ! ( wc_get_order( $order_id ) && wc_get_order( $order_id )->is_paid() ) ) {
+				wc_add_notice( __( 'Payment error: ', 'woo-wallet' ) . __( 'Something went wrong with processing payment please try again.', 'woo-wallet' ), 'error' );
+				return array( 'result' => 'failure' );
+			}
+
+			// Reduce stock levels (a no-op if payment completion already did).
 			wc_reduce_stock_levels( $order_id );
 
 			// Remove cart.
-			WC()->cart->empty_cart();
-
-			// Complete order payment.
-			$order->payment_complete();
+			if ( WC()->cart ) {
+				WC()->cart->empty_cart();
+			}
 
 			// Return thankyou redirect.
 			return array(

@@ -3,3 +3,6 @@
 /tests/wp-content/
 .DS_Store
 .phpunit.result.cache
+
+# Local code-graph output
+/graphify-out/

@@ -250,6 +250,71 @@ class Financial_Integrity_Hardening_Test extends WP_Ajax_UnitTestCase {
 		$this->assertGreaterThan( time() + WooWallet_Idempotency::IN_FLIGHT_TTL, $timeout, 'A completed replay record must be kept for the full TTL, not just the in-flight window.' );
 	}
 
+	/**
+	 * The TTL is enforced when a key is reused, not only by WP-Cron's cleanup
+	 * (which may be late or not running): a key reused after the replay window
+	 * runs the new request instead of replaying a day-old response.
+	 */
+	public function test_idempotency_does_not_replay_a_result_older_than_the_ttl() {
+		$user_id = $this->customer_id;
+		$key     = 'idem_expired_' . wp_generate_password( 10, false );
+		$calls   = 0;
+		$run     = function () use ( $user_id, $key, &$calls ) {
+			return WooWallet_Idempotency::run(
+				$user_id,
+				$key,
+				function () use ( &$calls ) {
+					++$calls;
+					return new WP_REST_Response( array( 'call' => $calls ), 200 );
+				}
+			);
+		};
+
+		$first = $run();
+		$this->assertSame( 1, $calls );
+
+		// Within the window the second use replays the first result.
+		$replay = $run();
+		$this->assertSame( 1, $calls );
+		$this->assertSame( 'true', $replay->get_headers()['Idempotent-Replay'] );
+
+		// Age the stored record past the TTL, as if cron never swept it.
+		$option_name = '_transient_' . WooWallet_Idempotency::TRANSIENT_PREFIX . $user_id . '_' . md5( $key );
+		$stored      = get_option( $option_name );
+		$stored['at'] = time() - WooWallet_Idempotency::TTL - 60;
+		update_option( $option_name, $stored, 'no' );
+
+		$fresh = $run();
+
+		$this->assertSame( 2, $calls, 'An expired record must not be replayed — the request runs again.' );
+		$this->assertSame( array( 'call' => 2 ), $fresh->get_data() );
+		$this->assertArrayNotHasKey( 'Idempotent-Replay', $fresh->get_headers() );
+		// And the new result is what is replayed from now on.
+		$this->assertSame( 2, $run()->get_data()['call'] );
+		$this->assertSame( 2, $calls );
+	}
+
+	public function test_idempotency_expiry_falls_back_to_the_timeout_option_for_a_record_without_a_timestamp() {
+		$user_id     = $this->customer_id;
+		$key         = 'idem_legacy_' . wp_generate_password( 10, false );
+		$transient   = WooWallet_Idempotency::TRANSIENT_PREFIX . $user_id . '_' . md5( $key );
+		$calls       = 0;
+		update_option( '_transient_' . $transient, array( 'status' => 200, 'body' => array( 'old' => true ) ), 'no' );
+		update_option( '_transient_timeout_' . $transient, time() - 10, 'no' );
+
+		$result = WooWallet_Idempotency::run(
+			$user_id,
+			$key,
+			function () use ( &$calls ) {
+				++$calls;
+				return new WP_REST_Response( array( 'new' => true ), 200 );
+			}
+		);
+
+		$this->assertSame( 1, $calls );
+		$this->assertSame( array( 'new' => true ), $result->get_data() );
+	}
+
 	// -- 3. Topup Currency Validation --------------------------------------
 
 	public function test_topup_rejects_malformed_currency_code() {

@@ -154,7 +154,16 @@ if ( ! class_exists( 'WooWallet_Idempotency' ) ) {
 			$existing = self::read_claim( $option_name );
 
 			if ( self::is_completed( $existing ) ) {
-				return self::replay( $existing );
+				if ( ! self::is_expired( $option_name, $existing ) ) {
+					return self::replay( $existing );
+				}
+				// An expired replay record. Its removal is normally left to
+				// WP-Cron's transient sweep, which may be late or not running at
+				// all — so the TTL is enforced here too. Swap it for a fresh
+				// claim atomically, so of two requests arriving together only one
+				// runs the callback.
+				$token = self::compare_and_swap_claim( $option_name, $existing );
+				return null !== $token ? $token : self::resolve_after_lost_race( $option_name );
 			}
 
 			if ( self::is_in_progress( $existing ) ) {
@@ -191,7 +200,11 @@ if ( ! class_exists( 'WooWallet_Idempotency' ) ) {
 			// row we didn't see a moment ago) actually wrote.
 			$current = self::read_claim( $option_name );
 			if ( self::is_completed( $current ) ) {
-				return self::replay( $current );
+				if ( ! self::is_expired( $option_name, $current ) ) {
+					return self::replay( $current );
+				}
+				$token = self::compare_and_swap_claim( $option_name, $current );
+				return null !== $token ? $token : self::resolve_after_lost_race( $option_name );
 			}
 			if ( self::is_in_progress( $current ) && self::is_stale( $current ) ) {
 				$token = self::compare_and_swap_claim( $option_name, $current );
@@ -317,6 +330,24 @@ if ( ! class_exists( 'WooWallet_Idempotency' ) ) {
 		 */
 		private static function is_stale( $state ) {
 			return isset( $state['at'] ) && ( time() - (int) $state['at'] > self::IN_FLIGHT_TTL );
+		}
+
+		/**
+		 * Whether a completed result has outlived the replay window (TTL).
+		 *
+		 * Judged by the row's own `at` timestamp; a row without one (written
+		 * by an older version) falls back to its separate timeout option.
+		 *
+		 * @param string $option_name Raw `_transient_*` option name.
+		 * @param array  $state       Completed claim row.
+		 * @return bool
+		 */
+		private static function is_expired( $option_name, $state ) {
+			if ( isset( $state['at'] ) ) {
+				return ( time() - (int) $state['at'] ) > self::TTL;
+			}
+			$timeout = get_option( '_transient_timeout_' . substr( $option_name, strlen( '_transient_' ) ), false );
+			return is_numeric( $timeout ) && (int) $timeout < time();
 		}
 
 		/**
